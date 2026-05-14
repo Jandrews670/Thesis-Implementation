@@ -297,3 +297,18 @@ The implementation is complete enough for thesis experiments when it can:
 - Run the same evaluation harness for baseline SDAE, FedRep, and DANN variants.
 - Produce the report's detection, isolation, drift, and SWaP-C metrics from saved experiment outputs.
 - Run live or near-live on the Raspberry Pi 5 without exceeding the practical compute envelope.
+
+## 8. Current Implementation Notes for Future Agents
+
+These notes record details discovered during the initial proof-of-concept build on 2026-05-14.
+
+- The current working environment is Python 3.9 on Windows. Keep code Python 3.9 compatible unless the environment is deliberately upgraded.
+- The project is intentionally self-contained under `Implementation/`. Use `scripts/setup_env.ps1` and run commands through `.\.venv\Scripts\python.exe -m usv_faults.cli` with `PYTHONPATH=src`.
+- Avoid adding mandatory dependencies casually. The current environment has `numpy`, `pandas`, `pyarrow`, `PyYAML`, and `torch`, but does not have `pydantic`, `typer`, `pytest`, `scikit-learn`, `joblib`, `scipy`, or `matplotlib`.
+- The current CLI therefore uses stdlib `argparse`, tests use stdlib `unittest`, schema handling uses local dataclasses, and the scaler is a small local standard scaler saved to `scaler.joblib` using pickle. Do not assume the filename means the `joblib` package is installed.
+- Smoke configs are deliberately tiny and are used for fast verification. They prove the code path, not thesis performance. The full configs still need deliberate longer runs before any scientific interpretation.
+- Synthetic raw telemetry is stored in `telemetry.parquet`. The `events.csv` file only stores event markers such as trial start, fault start, fault end, and trial end.
+- Raw trial folders are treated as immutable. If canonical files already exist, data attachment should reuse and QC them rather than overwriting them.
+- The SDAE should keep hidden layers configurable but default to ReLU hidden activations and a Sigmoid output activation. The latent layer currently remains linear.
+- The full planned SDAE remains `2109 -> 2048 -> 1024 -> 420 -> 1024 -> 2048 -> 2109`; smoke verification uses a smaller model so checks finish quickly.
+- The simple PNG writer currently creates only loss and reconstruction-error plots. It is not a model architecture visualizer or latent-space visualizer.

@@ -48,6 +48,19 @@ usv-faults run --source replay --trial data/raw/trials/2026-05-14_POC_B0_fault_b
 - Save every model, dictionary, and evaluation run with enough metadata to reproduce it.
 - Do not begin FedRep or DANN implementation until the baseline SDAE and dictionary pipeline works.
 
+### Current Status and Watch-Outs
+
+As of 2026-05-14, Milestones 1-3 have been implemented and smoke-verified. Future agents should treat this as a working foundation, not as final experimental evidence.
+
+- Run commands from `Implementation/` using `.\.venv\Scripts\python.exe -m usv_faults.cli` and `PYTHONPATH=src`.
+- The environment is Python 3.9 and intentionally avoids mandatory `typer`, `pydantic`, `pytest`, `scikit-learn`, `joblib`, `scipy`, and `matplotlib` dependencies.
+- The smoke configs are fast verification configs. The full configs remain the intended POC path and should be run deliberately when runtime/storage are acceptable.
+- Raw synthetic signal data is `telemetry.parquet`; `events.csv` is expected to contain only event markers.
+- Synthetic `attach-data` should reuse existing canonical raw trial folders rather than overwriting them.
+- The SDAE should default to ReLU hidden layers and Sigmoid output activation. Record both as config fields and in `run_manifest.yaml`.
+- The current smoke SDAE is deliberately small; do not infer full architecture performance from it.
+- Current plots are simple PNG training artifacts, not model architecture visualisations.
+
 ### Key Existing Source Documents
 
 - `Implementation/implementation_plan.md`
@@ -344,12 +357,15 @@ input_dim: 2109
 hidden_dims: [2048, 1024]
 latent_dim: 420
 decoder: mirror encoder
-activation: ReLU hidden layers
+hidden activation: ReLU
+output activation: Sigmoid
 masking_noise: 0.30
 loss: MSE + L1 latent activation penalty
 ```
 
 Use PyTorch. Keep the encoder and decoder separable so FedRep and DANN can reuse them later.
+
+The latent projection is currently linear. Keep `hidden_activation` and `output_activation` configurable in YAML so smoke runs can remain small while the full model preserves the intended report architecture.
 
 ### Training Rules
 
@@ -669,6 +685,7 @@ Stop and report clearly if:
 - The 2109-dimensional profile conflicts with the chosen sensor/channel interpretation.
 - `hdbscan` installation fails or is not practical on the target machine.
 - PyTorch training is too slow for the default SDAE dimensions.
+- A future change requires packages not present in the local environment; prefer a self-contained fallback or document the dependency clearly.
 - Synthetic faults do not produce separable reconstruction errors after reasonable signal tuning.
 - HDBSCAN cannot form stable clusters in the 420-dimensional latent space.
 - Public dataset licensing or download structure blocks the adapter.
@@ -690,4 +707,3 @@ The first implementation sprint is complete when:
 - Evaluation reports and replay decision logs are written.
 - All artifacts include provenance metadata.
 - Tests cover the core data path enough that future hardware adapters can be added without rewriting the pipeline.
-

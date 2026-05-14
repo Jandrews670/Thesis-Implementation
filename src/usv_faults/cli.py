@@ -9,6 +9,7 @@ from usv_faults.data_sources.synthetic_usv import SyntheticUSVSource
 from usv_faults.preprocessing.datasets import make_dataset
 from usv_faults.storage.preview import write_preview_csv
 from usv_faults.storage.trials import quality_check_trial
+from usv_faults.training.train_sdae import train_sdae
 
 
 def _not_implemented(name: str, milestone: str) -> int:
@@ -54,6 +55,16 @@ def _cmd_make_dataset(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_train_sdae(args: argparse.Namespace) -> int:
+    result = train_sdae(args.dataset, args.config, args.out)
+    print(
+        f"Trained {result['run_id']} for {result['epochs']} epochs on "
+        f"{result['train_windows']} healthy windows; threshold={result['threshold']:.6f}; "
+        f"artifacts={result['out_dir']}"
+    )
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="usv-faults",
@@ -81,8 +92,13 @@ def build_parser() -> argparse.ArgumentParser:
     dataset.add_argument("--out", required=True, type=Path)
     dataset.set_defaults(func=_cmd_make_dataset)
 
+    train = subparsers.add_parser("train-sdae", help="Train the baseline SDAE.")
+    train.add_argument("--dataset", required=True, type=Path)
+    train.add_argument("--config", required=True, type=Path)
+    train.add_argument("--out", required=True, type=Path)
+    train.set_defaults(func=_cmd_train_sdae)
+
     for name, milestone in [
-        ("train-sdae", "Milestone 3"),
         ("build-dictionary", "Milestone 4"),
         ("evaluate", "Milestone 5"),
         ("run", "Milestone 5"),

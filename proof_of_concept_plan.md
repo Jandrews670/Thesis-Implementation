@@ -356,6 +356,20 @@ The proof of concept is complete when:
 - HDBSCAN may be unstable in a 420-dimensional latent space. Keep latent dimension and HDBSCAN parameters configurable from the first implementation.
 - FedRep and DANN may distract from the baseline. Do not start them until baseline SDAE, HDBSCAN, and dictionary artifacts exist.
 
+## 9. Current Proof-of-Concept Implementation Notes
+
+These notes reflect the first working POC implementation pass on 2026-05-14.
+
+- Milestones 1-3 have been smoke-verified, not full-matrix verified. The smoke datasets are intentionally small and are not thesis evidence.
+- Use `configs/poc_synthetic_training_smoke.yaml`, `configs/dataset_poc_synthetic_training_smoke.yaml`, and `configs/baseline_sdae_smoke.yaml` for quick training checks.
+- Use `configs/poc_synthetic.yaml`, `configs/dataset_poc_synthetic.yaml`, and `configs/baseline_sdae.yaml` for fuller POC runs once runtime and disk usage are acceptable.
+- `telemetry.parquet` is the synthetic raw signal file. `events.csv` is only an event timeline and is expected to contain only a few rows.
+- `attach-data` should not rewrite existing raw trials. Existing canonical trial files should be reused and quality-checked, matching the immutable raw data rule.
+- The SDAE activation policy should be explicit in config: hidden layers use `relu`, the reconstruction output uses `sigmoid`, and the latent layer remains linear.
+- The current smoke SDAE uses `2109 -> 128 -> 64 -> 16 -> 64 -> 128 -> 2109` so tests run quickly. The planned full SDAE remains `2109 -> 2048 -> 1024 -> 420 -> 1024 -> 2048 -> 2109`.
+- The current scaler is fitted only on healthy training windows and saved under the planned name `scaler.joblib`, but the implementation uses pickle to avoid requiring the external `joblib` package.
+- The current plots are limited to `loss_curve.png` and `reconstruction_error_hist.png`; they are artifacts for training sanity checks, not model or latent visualisations.
+
 ## Attachment A: Simulation Data Profile
 
 The companion YAML file `poc_synthetic_data_attachment.yaml` defines the initial synthetic-data attachment profile. It should be treated as a draft config for `configs/poc_synthetic.yaml` once implementation begins.

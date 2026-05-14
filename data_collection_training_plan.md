@@ -531,3 +531,18 @@ The first useful version of this system should implement only:
 This is enough to support the first real thesis milestone: proving that healthy baseline data can train an SDAE and that induced faults cause measurable reconstruction error.
 
 Everything else, including FedRep, DANN, model export, and richer experiment tracking, should build on that same data system rather than inventing a second workflow later.
+
+## 21. Current Artifact and Environment Notes
+
+These notes capture implementation details discovered during the first POC build on 2026-05-14.
+
+- The implementation currently runs in a local `.venv` under `Implementation/`, using `--system-site-packages` to reuse installed numerical libraries. Future agents should run `scripts/setup_env.ps1` before manual commands.
+- The local environment is dependency-light. Do not assume `typer`, `pydantic`, `pytest`, `scikit-learn`, `joblib`, `scipy`, or `matplotlib` are installed.
+- Current tests use `unittest`; command handling uses `argparse`; schema validation uses local dataclasses. These choices were made to keep the POC self-contained.
+- Current generated raw synthetic telemetry uses `telemetry.parquet`. Future hardware recordings may use `telemetry.bin`, but downstream code should continue to consume canonical trial folders rather than source-specific paths.
+- `events.csv` is not raw data. It contains sparse event markers and should stay small.
+- Generated raw trial folders should be considered immutable. If a trial needs to be regenerated, use a new trial ID or explicitly delete the generated folder outside the normal collection path.
+- Processed datasets should continue to write `windows.parquet`, `labels.parquet`, `dataset_manifest.yaml`, and `split_manifest.yaml`.
+- SDAE artifacts currently include `model.pt`, `scaler.joblib`, `threshold.json`, `training_history.csv`, `metrics.json`, and basic plots. The `scaler.joblib` filename is kept for compatibility with the plan, but the current implementation serializes a local scaler with pickle.
+- The SDAE config should explicitly record `hidden_activation: relu` and `output_activation: sigmoid`; future artifacts should preserve these fields in `run_manifest.yaml`.
+- Smoke datasets and smoke model configs are for verification only. They use tiny trial counts, tiny epoch counts, and reduced hidden/latent sizes.

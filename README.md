@@ -33,6 +33,18 @@ Objective 2 adds telemetry previews and processed 100 ms windows:
 .\.venv\Scripts\python.exe -m usv_faults.cli make-dataset --config configs/dataset_poc_synthetic_smoke.yaml --out data/processed/datasets/ds_poc_synthetic_smoke
 ```
 
+Run the objective 3 checks:
+
+```powershell
+.\scripts\run_objective_3_checks.ps1
+```
+
+Objective 3 trains the baseline SDAE on healthy windows and writes a model artifact:
+
+```powershell
+.\.venv\Scripts\python.exe -m usv_faults.cli train-sdae --dataset data/processed/datasets/ds_poc_synthetic_training_smoke --config configs/baseline_sdae_smoke.yaml --out artifacts/models/run_poc_sdae_smoke
+```
+
 The first runnable objective is synthetic data attachment and quality checking:
 
 ```powershell

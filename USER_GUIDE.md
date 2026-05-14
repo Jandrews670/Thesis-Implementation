@@ -10,9 +10,11 @@ The current implementation supports:
 - 100 ms window generation
 - SDAE training on healthy windows
 - reconstruction-threshold selection
+- HDBSCAN latent clustering
+- Ledoit-Wolf/Mahalanobis fault dictionary generation
 - training artifacts and basic plots
 
-It does not yet support HDBSCAN fault dictionaries, FedRep, DANN, external public datasets, or live Teensy/Raspberry Pi collection. Those are later milestones.
+It does not yet support FedRep, DANN, external public datasets, or live Teensy/Raspberry Pi collection. Those are later milestones.
 
 ## 1. Environment Setup
 
@@ -28,7 +30,9 @@ Create or refresh the local environment:
 powershell -ExecutionPolicy Bypass -File scripts\setup_env.ps1
 ```
 
-The project currently runs through the local `.venv` and `PYTHONPATH=src`. The setup script does not download packages; it reuses packages already installed on this machine through `--system-site-packages`.
+The project currently runs through the local `.venv` and `PYTHONPATH=src`. The package dependencies in `pyproject.toml` include the ML libraries used by the thesis pipeline: PyTorch, HDBSCAN, scikit-learn, SciPy, joblib, and Matplotlib.
+
+On this Windows/Python 3.9 environment, `hdbscan==0.8.40` is pinned because it has a prebuilt wheel. Newer HDBSCAN releases may require Microsoft C++ Build Tools to compile from source.
 
 For manual commands in PowerShell, set:
 
@@ -337,7 +341,7 @@ plots/loss_curve.png
 plots/reconstruction_error_hist.png
 ```
 
-Despite the `.joblib` name, the scaler is currently a standard Python pickle file because the local environment does not have `joblib` installed. The filename is kept to match the planned artifact naming.
+The scaler artifact keeps the planned filename `scaler.joblib`. The current scaler class is still project-local, but the broader Milestone 4 environment now includes the real `joblib`, scikit-learn, SciPy, HDBSCAN, and Matplotlib dependencies.
 
 ## 11. Inspect the Training Result
 
@@ -418,10 +422,110 @@ To add another fault trial, add it under a fault trial set, set `fault_start_s` 
 ## 14. Current Limitations
 
 - Only synthetic data is supported.
-- The training command does not yet export latent vectors.
-- HDBSCAN and fault dictionary generation are not implemented yet.
+- Latent vectors are currently exported by `build-dictionary`, not by `train-sdae`.
+- HDBSCAN, Ledoit-Wolf covariance, and chi-square thresholds require the package dependencies listed in `pyproject.toml`.
 - There is no live hardware ingestion yet.
 - The plotting helper only creates simple loss/error PNGs.
 - The current smoke config is for fast validation, not final thesis evidence.
 
-For final thesis runs, use longer trials, the full model config, and later the fault dictionary/evaluation milestones once implemented.
+For final thesis runs, use longer trials, the full model config, and the evaluation milestones once implemented.
+
+## 15. Build the Fault Dictionary
+
+Dictionary generation is controlled by `configs/hdbscan.yaml`.
+
+Current smoke/default parameters:
+
+```yaml
+rolling_window_size: 300
+min_cluster_size: 15
+min_samples: 15
+metric: euclidean
+cluster_selection_method: eom
+allow_single_cluster: true
+mahalanobis_confidence: 0.99
+dictionary_baseline_id: 0
+known_fault_labels:
+  - bearing_impulse
+  - propeller_imbalance
+withheld_fault_labels:
+  - shaft_rub
+```
+
+The dictionary builder:
+
+- extracts reconstruction errors and latent vectors from the trained SDAE
+- selects anomaly windows using the saved SDAE threshold
+- builds dictionary entries only from Baseline 0 known fault anomaly windows
+- excludes labels listed in `withheld_fault_labels`
+- clusters candidate latents using `hdbscan.HDBSCAN`
+- estimates each cluster covariance and precision matrix using `sklearn.covariance.LedoitWolf`
+- computes the squared-Mahalanobis known/novel threshold with `scipy.stats.chi2.ppf`
+
+For the current smoke model, `latent_dim: 16`, so the 99 percent Mahalanobis threshold is:
+
+```text
+chi2.ppf(0.99, 16) = 31.999926908815176
+```
+
+For the thesis-default model, `latent_dim: 420`, so the same rule gives the planned threshold near:
+
+```text
+chi2.ppf(0.99, 420) ~= 487.6
+```
+
+Build the smoke dictionary from the trained SDAE:
+
+```powershell
+.\.venv\Scripts\python.exe -m usv_faults.cli build-dictionary `
+  --model artifacts/models/run_poc_sdae_smoke `
+  --dataset data/processed/datasets/ds_poc_synthetic_training_smoke `
+  --config configs/hdbscan.yaml `
+  --out artifacts/dictionaries/dict_poc_b0_smoke
+```
+
+This writes:
+
+```text
+dictionary_manifest.yaml
+dictionary.json
+cluster_summary.csv
+latent_windows.parquet
+cluster_assignments.csv
+known_novel_decisions.csv
+cluster_plots/
+```
+
+The current `configs/hdbscan.yaml` uses real `hdbscan.HDBSCAN`, `sklearn.covariance.LedoitWolf`, and `scipy.stats.chi2.ppf`. The `shaft_rub` label is configured as withheld from dictionary construction for later known/novel testing.
+
+One-command Objective 4 smoke check:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\run_objective_4_checks.ps1
+```
+
+## 16. Objective 4 Test Coverage
+
+`tests/test_objective_4.py` contains two Milestone 4 checks.
+
+`test_ledoit_wolf_and_chi_square_outputs` verifies:
+
+- `covariance_with_ledoit_wolf(...)` uses `sklearn.covariance.LedoitWolf`
+- covariance and precision matrices have the expected shape
+- Ledoit-Wolf shrinkage is between `0.0` and `1.0`
+- `chi_square_threshold(420, 0.99)` uses `scipy.stats.chi2.ppf`
+- the 420-dimensional 99 percent threshold is above `480`, matching the thesis expectation near `487.6`
+
+`test_build_dictionary_writes_hdbscan_artifacts` runs a reduced integration path:
+
+```text
+synthetic trials -> dataset -> tiny SDAE -> HDBSCAN dictionary
+```
+
+It verifies:
+
+- required dictionary files are written
+- `dictionary_manifest.yaml` records `hdbscan.HDBSCAN`
+- `dictionary_manifest.yaml` records `scipy.stats.chi2.ppf`
+- `dictionary.json` records `sklearn.covariance.LedoitWolf`
+- at least one dictionary entry is created for `bearing_impulse`

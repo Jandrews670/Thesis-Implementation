@@ -13,10 +13,15 @@ dependencies = [
   "pandas",
   "pyarrow",
   "pyyaml",
+  "torch",
+  "scipy",
+  "scikit-learn",
+  "hdbscan==0.8.40",
+  "joblib",
+  "matplotlib",
 ]
 
 [project.optional-dependencies]
-ml = ["scipy", "torch", "scikit-learn", "hdbscan", "joblib", "matplotlib"]
 dev = ["pytest", "ruff"]
 
 [project.scripts]

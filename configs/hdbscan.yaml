@@ -3,4 +3,11 @@ min_cluster_size: 15
 min_samples: 15
 metric: euclidean
 cluster_selection_method: eom
+allow_single_cluster: true
 mahalanobis_confidence: 0.99
+dictionary_baseline_id: 0
+known_fault_labels:
+  - bearing_impulse
+  - propeller_imbalance
+withheld_fault_labels:
+  - shaft_rub

@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 from typing import List, Optional
 
+from usv_faults.clustering.fault_dictionary import build_fault_dictionary
 from usv_faults.data_sources.synthetic_usv import SyntheticUSVSource
 from usv_faults.preprocessing.datasets import make_dataset
 from usv_faults.storage.preview import write_preview_csv
@@ -65,6 +66,17 @@ def _cmd_train_sdae(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_build_dictionary(args: argparse.Namespace) -> int:
+    result = build_fault_dictionary(args.model, args.dataset, args.config, args.out)
+    print(
+        f"Built dictionary {result['dictionary_id']} with "
+        f"{result['cluster_count']} non-noise clusters and "
+        f"{result['dictionary_entry_count']} entries from "
+        f"{result['candidate_window_count']} candidate anomaly windows; artifacts={result['out_dir']}"
+    )
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="usv-faults",
@@ -98,8 +110,14 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--out", required=True, type=Path)
     train.set_defaults(func=_cmd_train_sdae)
 
+    dictionary = subparsers.add_parser("build-dictionary", help="Build a latent fault dictionary.")
+    dictionary.add_argument("--model", required=True, type=Path)
+    dictionary.add_argument("--dataset", required=True, type=Path)
+    dictionary.add_argument("--config", required=True, type=Path)
+    dictionary.add_argument("--out", required=True, type=Path)
+    dictionary.set_defaults(func=_cmd_build_dictionary)
+
     for name, milestone in [
-        ("build-dictionary", "Milestone 4"),
         ("evaluate", "Milestone 5"),
         ("run", "Milestone 5"),
     ]:

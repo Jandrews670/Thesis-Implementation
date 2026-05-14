@@ -1,0 +1,401 @@
+from __future__ import annotations
+
+import csv
+import json
+import os
+import tempfile
+from datetime import datetime, timezone
+from importlib import metadata
+from pathlib import Path
+from typing import Dict, Iterable, List, Optional, Tuple
+
+import numpy as np
+import pandas as pd
+
+from usv_faults.clustering.hdbscan_pipeline import (
+    ClusterResult,
+    cluster_latents,
+    cluster_persistence_for_label,
+)
+from usv_faults.clustering.latent import extract_latent_windows
+from usv_faults.clustering.mahalanobis import (
+    chi_square_threshold,
+    covariance_with_ledoit_wolf,
+    squared_mahalanobis,
+)
+from usv_faults.config import read_yaml, write_yaml
+
+
+def build_fault_dictionary(model_dir: Path, dataset_dir: Path, config_path: Path, out_dir: Path) -> Dict[str, object]:
+    config = read_yaml(config_path)
+    run_manifest = read_yaml(model_dir / "run_manifest.yaml")
+    dataset_manifest = read_yaml(dataset_dir / "dataset_manifest.yaml")
+    extraction = extract_latent_windows(model_dir, dataset_dir)
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    plots_dir = out_dir / "cluster_plots"
+    plots_dir.mkdir(parents=True, exist_ok=True)
+
+    latent_frame = extraction.frame.copy()
+    latent_frame.to_parquet(out_dir / "latent_windows.parquet", index=False)
+
+    candidate_mask = _dictionary_candidate_mask(latent_frame, config)
+    candidate_frame = latent_frame.loc[candidate_mask].reset_index(drop=True)
+    if candidate_frame.empty:
+        raise ValueError("no anomaly windows from configured known B0 faults are available for dictionary building")
+
+    candidate_latents = candidate_frame[extraction.latent_columns].to_numpy(dtype=np.float64)
+    cluster_result = cluster_latents(candidate_latents, config)
+    candidate_frame["cluster_label"] = cluster_result.labels
+    candidate_frame["cluster_probability"] = cluster_result.probabilities
+    candidate_frame.to_csv(out_dir / "cluster_assignments.csv", index=False)
+
+    latent_dim = len(extraction.latent_columns)
+    confidence = float(config.get("mahalanobis_confidence", 0.99))
+    threshold = chi_square_threshold(latent_dim, confidence)
+    source_model_id = str(run_manifest.get("run_id", model_dir.name))
+    source_dataset_id = str(dataset_manifest.get("dataset_id", dataset_dir.name))
+
+    entries, cluster_rows = _dictionary_entries(
+        candidate_frame=candidate_frame,
+        latent_columns=extraction.latent_columns,
+        cluster_result=cluster_result,
+        threshold=threshold,
+        source_model_id=source_model_id,
+        source_dataset_id=source_dataset_id,
+    )
+    _write_cluster_summary(out_dir / "cluster_summary.csv", cluster_rows)
+
+    decisions = _known_novel_decisions(
+        latent_frame=latent_frame,
+        latent_columns=extraction.latent_columns,
+        entries=entries,
+    )
+    decisions.to_csv(out_dir / "known_novel_decisions.csv", index=False)
+
+    dictionary = {
+        "dictionary_id": out_dir.name,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "source_model_id": source_model_id,
+        "source_dataset_id": source_dataset_id,
+        "latent_dim": latent_dim,
+        "clustering": {
+            "method": cluster_result.method,
+            "config": cluster_result.details,
+        },
+        "mahalanobis": threshold,
+        "known_fault_labels": list(config.get("known_fault_labels", [])),
+        "withheld_fault_labels": list(config.get("withheld_fault_labels", [])),
+        "entries": entries,
+        "decision_summary": _decision_summary(decisions, config),
+    }
+    _write_json(out_dir / "dictionary.json", dictionary)
+
+    _write_cluster_plot(
+        plots_dir / "latent_clusters.png",
+        candidate_frame,
+        extraction.latent_columns,
+        "cluster_label",
+        "HDBSCAN clusters in SDAE latent space",
+    )
+    _write_cluster_plot(
+        plots_dir / "latent_fault_labels.png",
+        candidate_frame,
+        extraction.latent_columns,
+        "fault_label",
+        "Known fault labels in SDAE latent space",
+    )
+
+    manifest = {
+        "dictionary_id": out_dir.name,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "source_model": source_model_id,
+        "source_dataset": source_dataset_id,
+        "config_file": str(config_path),
+        "latent_dim": latent_dim,
+        "reconstruction_threshold": extraction.reconstruction_threshold,
+        "hdbscan": {
+            "method": cluster_result.method,
+            "details": cluster_result.details,
+        },
+        "mahalanobis": threshold,
+        "known_fault_labels": list(config.get("known_fault_labels", [])),
+        "withheld_fault_labels": list(config.get("withheld_fault_labels", [])),
+        "window_counts": {
+            "total": int(len(latent_frame)),
+            "anomaly": int(latent_frame["is_anomaly"].astype(bool).sum()),
+            "dictionary_candidates": int(len(candidate_frame)),
+            "withheld_fault_anomalies": int(_withheld_anomaly_count(latent_frame, config)),
+        },
+        "cluster_count": int(len([row for row in cluster_rows if int(row["cluster_label"]) >= 0])),
+        "dictionary_entry_count": int(len(entries)),
+        "dependencies": _dependency_versions(["hdbscan", "scikit-learn", "scipy", "matplotlib"]),
+        "artifacts": {
+            "dictionary": "dictionary.json",
+            "cluster_summary": "cluster_summary.csv",
+            "latent_windows": "latent_windows.parquet",
+            "cluster_assignments": "cluster_assignments.csv",
+            "known_novel_decisions": "known_novel_decisions.csv",
+            "cluster_plots": "cluster_plots/",
+        },
+    }
+    write_yaml(out_dir / "dictionary_manifest.yaml", manifest)
+
+    return {
+        "dictionary_id": out_dir.name,
+        "out_dir": str(out_dir),
+        "cluster_count": manifest["cluster_count"],
+        "dictionary_entry_count": manifest["dictionary_entry_count"],
+        "candidate_window_count": len(candidate_frame),
+        "withheld_fault_anomalies": manifest["window_counts"]["withheld_fault_anomalies"],
+        "known_fault_match_rate": dictionary["decision_summary"].get("known_fault_match_rate"),
+        "withheld_novel_rate": dictionary["decision_summary"].get("withheld_novel_rate"),
+    }
+
+
+def _dictionary_candidate_mask(frame: pd.DataFrame, config: Dict[str, object]) -> pd.Series:
+    baseline_id = int(config.get("dictionary_baseline_id", 0))
+    fault_labels = frame["fault_label"].astype(str)
+    known_fault_labels = set(str(item) for item in config.get("known_fault_labels", []))
+    withheld_fault_labels = set(str(item) for item in config.get("withheld_fault_labels", []))
+    if known_fault_labels:
+        known_mask = fault_labels.isin(known_fault_labels)
+    else:
+        known_mask = (fault_labels != "none") & (~fault_labels.isin(withheld_fault_labels))
+    return (
+        frame["is_anomaly"].astype(bool)
+        & frame["is_fault"].astype(bool)
+        & (frame["baseline_id"].astype(int) == baseline_id)
+        & known_mask
+    )
+
+
+def _dictionary_entries(
+    candidate_frame: pd.DataFrame,
+    latent_columns: List[str],
+    cluster_result: ClusterResult,
+    threshold: Dict[str, float],
+    source_model_id: str,
+    source_dataset_id: str,
+) -> Tuple[List[Dict[str, object]], List[Dict[str, object]]]:
+    entries: List[Dict[str, object]] = []
+    cluster_rows: List[Dict[str, object]] = []
+    labels = sorted(int(label) for label in set(cluster_result.labels))
+
+    for cluster_label in labels:
+        cluster_mask = candidate_frame["cluster_label"].astype(int) == cluster_label
+        cluster_frame = candidate_frame.loc[cluster_mask].copy()
+        sample_count = int(len(cluster_frame))
+        fault_counts = _value_counts(cluster_frame["fault_label"].astype(str))
+        trial_ids = sorted(str(item) for item in set(cluster_frame["trial_id"].astype(str)))
+        majority_label = _majority_label(fault_counts)
+        is_noise = cluster_label < 0
+        is_dictionary_entry = not is_noise and sample_count > 0
+
+        cluster_rows.append(
+            {
+                "cluster_label": cluster_label,
+                "sample_count": sample_count,
+                "is_dictionary_entry": bool(is_dictionary_entry),
+                "majority_fault_label": majority_label or "",
+                "fault_label_counts": json.dumps(fault_counts, sort_keys=True),
+                "source_trial_ids": ";".join(trial_ids),
+                "mean_cluster_probability": float(cluster_frame["cluster_probability"].mean())
+                if sample_count
+                else 0.0,
+                "cluster_persistence": cluster_persistence_for_label(cluster_result, cluster_label),
+            }
+        )
+
+        if not is_dictionary_entry:
+            continue
+
+        values = cluster_frame[latent_columns].to_numpy(dtype=np.float64)
+        covariance = covariance_with_ledoit_wolf(values)
+        centroid = values.mean(axis=0)
+        entries.append(
+            {
+                "fault_id": f"fault_{len(entries) + 1:03d}",
+                "label": majority_label or f"cluster_{cluster_label}",
+                "cluster_label": int(cluster_label),
+                "centroid": centroid.tolist(),
+                "covariance": covariance.covariance.tolist(),
+                "precision": covariance.precision.tolist(),
+                "ledoit_wolf_shrinkage": covariance.shrinkage,
+                "covariance_estimator": covariance.estimator,
+                "covariance_condition_number": covariance.condition_number,
+                "sample_count": sample_count,
+                "source_trial_ids": trial_ids,
+                "source_model_id": source_model_id,
+                "source_dataset_id": source_dataset_id,
+                "latent_dim": len(latent_columns),
+                "mahalanobis_confidence": threshold["confidence"],
+                "mahalanobis_threshold": threshold["threshold"],
+                "mahalanobis_threshold_method": threshold["method"],
+                "cluster_probability_mean": float(cluster_frame["cluster_probability"].mean()),
+                "cluster_persistence": cluster_persistence_for_label(cluster_result, cluster_label),
+                "cluster_fault_label_counts": fault_counts,
+            }
+        )
+    return entries, cluster_rows
+
+
+def _known_novel_decisions(
+    latent_frame: pd.DataFrame,
+    latent_columns: List[str],
+    entries: List[Dict[str, object]],
+) -> pd.DataFrame:
+    rows: List[Dict[str, object]] = []
+    anomaly_frame = latent_frame.loc[latent_frame["is_anomaly"].astype(bool)].copy()
+    for _index, row in anomaly_frame.iterrows():
+        latent = row[latent_columns].to_numpy(dtype=np.float64)
+        match = _nearest_entry(latent, entries)
+        rows.append(
+            {
+                "trial_id": row["trial_id"],
+                "window_start_s": float(row["window_start_s"]),
+                "window_end_s": float(row["window_end_s"]),
+                "fault_label": row["fault_label"],
+                "baseline_id": int(row["baseline_id"]),
+                "reconstruction_error": float(row["reconstruction_error"]),
+                "dictionary_decision": match["decision"],
+                "matched_fault_id": match.get("fault_id"),
+                "matched_fault_label": match.get("label"),
+                "mahalanobis_distance_sq": match.get("distance"),
+                "mahalanobis_threshold": match.get("threshold"),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def _nearest_entry(latent: np.ndarray, entries: List[Dict[str, object]]) -> Dict[str, object]:
+    if not entries:
+        return {"decision": "novel"}
+    distances: List[Tuple[float, Dict[str, object]]] = []
+    for entry in entries:
+        distance = squared_mahalanobis(
+            latent,
+            np.asarray(entry["centroid"], dtype=np.float64),
+            np.asarray(entry["precision"], dtype=np.float64),
+        )
+        distances.append((distance, entry))
+    distance, entry = min(distances, key=lambda item: item[0])
+    threshold = float(entry["mahalanobis_threshold"])
+    return {
+        "decision": "known" if distance <= threshold else "novel",
+        "fault_id": entry["fault_id"],
+        "label": entry["label"],
+        "distance": float(distance),
+        "threshold": threshold,
+    }
+
+
+def _decision_summary(decisions: pd.DataFrame, config: Dict[str, object]) -> Dict[str, Optional[float]]:
+    known_fault_labels = set(str(item) for item in config.get("known_fault_labels", []))
+    withheld_fault_labels = set(str(item) for item in config.get("withheld_fault_labels", []))
+    if decisions.empty:
+        return {
+            "anomaly_decision_count": 0,
+            "known_fault_match_rate": None,
+            "withheld_novel_rate": None,
+        }
+    known_faults = decisions["fault_label"].astype(str).isin(known_fault_labels)
+    withheld_faults = decisions["fault_label"].astype(str).isin(withheld_fault_labels)
+    known_correct = decisions["dictionary_decision"].eq("known") & (
+        decisions["fault_label"].astype(str) == decisions["matched_fault_label"].astype(str)
+    )
+    return {
+        "anomaly_decision_count": int(len(decisions)),
+        "known_decision_rate": float(decisions["dictionary_decision"].eq("known").mean()),
+        "novel_decision_rate": float(decisions["dictionary_decision"].eq("novel").mean()),
+        "known_fault_match_rate": float(known_correct[known_faults].mean()) if known_faults.any() else None,
+        "withheld_novel_rate": float(decisions.loc[withheld_faults, "dictionary_decision"].eq("novel").mean())
+        if withheld_faults.any()
+        else None,
+    }
+
+
+def _withheld_anomaly_count(frame: pd.DataFrame, config: Dict[str, object]) -> int:
+    withheld_fault_labels = set(str(item) for item in config.get("withheld_fault_labels", []))
+    if not withheld_fault_labels:
+        return 0
+    mask = frame["is_anomaly"].astype(bool) & frame["fault_label"].astype(str).isin(withheld_fault_labels)
+    return int(mask.sum())
+
+
+def _value_counts(values: Iterable[str]) -> Dict[str, int]:
+    counts: Dict[str, int] = {}
+    for value in values:
+        counts[str(value)] = counts.get(str(value), 0) + 1
+    return counts
+
+
+def _majority_label(counts: Dict[str, int]) -> Optional[str]:
+    if not counts:
+        return None
+    return max(counts.items(), key=lambda item: (item[1], item[0]))[0]
+
+
+def _write_cluster_summary(path: Path, rows: List[Dict[str, object]]) -> None:
+    fieldnames = [
+        "cluster_label",
+        "sample_count",
+        "is_dictionary_entry",
+        "majority_fault_label",
+        "fault_label_counts",
+        "source_trial_ids",
+        "mean_cluster_probability",
+        "cluster_persistence",
+    ]
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow(row)
+
+
+def _write_cluster_plot(
+    path: Path,
+    frame: pd.DataFrame,
+    latent_columns: List[str],
+    color_column: str,
+    title: str,
+) -> None:
+    cache_env = os.environ.get("MPLCONFIGDIR")
+    cache_dir = Path(cache_env) if cache_env else Path(tempfile.gettempdir()) / "usv_faults_matplotlib_cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    os.environ["MPLCONFIGDIR"] = str(cache_dir)
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    x = frame[latent_columns[0]].to_numpy(dtype=np.float64)
+    y = frame[latent_columns[1]].to_numpy(dtype=np.float64) if len(latent_columns) > 1 else np.zeros(len(frame))
+    color_codes, labels = pd.factorize(frame[color_column].astype(str))
+
+    figure, axis = plt.subplots(figsize=(7, 5), dpi=120)
+    scatter = axis.scatter(x, y, c=color_codes, cmap="tab10", s=28, alpha=0.85)
+    axis.set_title(title)
+    axis.set_xlabel(latent_columns[0])
+    axis.set_ylabel(latent_columns[1] if len(latent_columns) > 1 else "zero")
+    handles = scatter.legend_elements()[0]
+    axis.legend(handles, labels, title=color_column, loc="best", fontsize=8)
+    figure.tight_layout()
+    figure.savefig(path)
+    plt.close(figure)
+
+
+def _dependency_versions(package_names: List[str]) -> Dict[str, str]:
+    versions: Dict[str, str] = {}
+    for package_name in package_names:
+        try:
+            versions[package_name] = metadata.version(package_name)
+        except metadata.PackageNotFoundError:
+            versions[package_name] = "not_installed"
+    return versions
+
+
+def _write_json(path: Path, data: Dict[str, object]) -> None:
+    with path.open("w", encoding="utf-8") as handle:
+        json.dump(data, handle, indent=2)

@@ -6,6 +6,8 @@ from pathlib import Path
 from typing import List, Optional
 
 from usv_faults.data_sources.synthetic_usv import SyntheticUSVSource
+from usv_faults.preprocessing.datasets import make_dataset
+from usv_faults.storage.preview import write_preview_csv
 from usv_faults.storage.trials import quality_check_trial
 
 
@@ -36,6 +38,22 @@ def _cmd_qc(args: argparse.Namespace) -> int:
     return 1 if report.errors else 0
 
 
+def _cmd_preview(args: argparse.Namespace) -> int:
+    out = write_preview_csv(args.trial, args.out)
+    print(f"Wrote telemetry preview to {out}")
+    print(f"Wrote preview summary to {out.with_name(out.stem + '_summary.csv')}")
+    return 0
+
+
+def _cmd_make_dataset(args: argparse.Namespace) -> int:
+    result = make_dataset(args.config, args.out)
+    print(
+        f"Created dataset {result['dataset_id']} with {result['window_count']} windows, "
+        f"{result['input_dim']} features, and {result['trial_count']} trials at {result['out_dir']}"
+    )
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="usv-faults",
@@ -53,9 +71,17 @@ def build_parser() -> argparse.ArgumentParser:
     qc.add_argument("--trial", required=True, type=Path)
     qc.set_defaults(func=_cmd_qc)
 
+    preview = subparsers.add_parser("preview", help="Write a lightweight telemetry CSV preview.")
+    preview.add_argument("--trial", required=True, type=Path)
+    preview.add_argument("--out", required=False, type=Path, default=None)
+    preview.set_defaults(func=_cmd_preview)
+
+    dataset = subparsers.add_parser("make-dataset", help="Create processed windows from raw trials.")
+    dataset.add_argument("--config", required=True, type=Path)
+    dataset.add_argument("--out", required=True, type=Path)
+    dataset.set_defaults(func=_cmd_make_dataset)
+
     for name, milestone in [
-        ("preview", "Milestone 2"),
-        ("make-dataset", "Milestone 2"),
         ("train-sdae", "Milestone 3"),
         ("build-dictionary", "Milestone 4"),
         ("evaluate", "Milestone 5"),

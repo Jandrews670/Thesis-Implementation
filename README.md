@@ -20,6 +20,19 @@ Run the objective 1 checks:
 
 The check script uses `configs/poc_synthetic_smoke.yaml` so it validates the raw-trial path quickly. Use `configs/poc_synthetic.yaml` when you intentionally want the full proof-of-concept synthetic dataset.
 
+Run the objective 2 checks:
+
+```powershell
+.\scripts\run_objective_2_checks.ps1
+```
+
+Objective 2 adds telemetry previews and processed 100 ms windows:
+
+```powershell
+.\.venv\Scripts\python.exe -m usv_faults.cli preview --trial data/raw/trials_smoke/2026-05-14_POC_B0_nominal_T001
+.\.venv\Scripts\python.exe -m usv_faults.cli make-dataset --config configs/dataset_poc_synthetic_smoke.yaml --out data/processed/datasets/ds_poc_synthetic_smoke
+```
+
 The first runnable objective is synthetic data attachment and quality checking:
 
 ```powershell

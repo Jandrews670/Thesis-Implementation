@@ -25,6 +25,6 @@ function Invoke-Checked {
 }
 
 Invoke-Checked -m unittest discover -s tests
-Invoke-Checked -m usv_faults.cli --help
 Invoke-Checked -m usv_faults.cli attach-data --source synthetic --config configs/poc_synthetic_smoke.yaml --out data/raw/trials_smoke
-Invoke-Checked -m usv_faults.cli qc --trial data/raw/trials_smoke/2026-05-14_POC_B0_nominal_T001
+Invoke-Checked -m usv_faults.cli preview --trial data/raw/trials_smoke/2026-05-14_POC_B0_nominal_T001
+Invoke-Checked -m usv_faults.cli make-dataset --config configs/dataset_poc_synthetic_smoke.yaml --out data/processed/datasets/ds_poc_synthetic_smoke

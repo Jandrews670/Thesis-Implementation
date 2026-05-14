@@ -10,7 +10,7 @@ import pandas as pd
 
 from usv_faults.config import load_config
 from usv_faults.schemas import EventRow, SyntheticConfig, SyntheticTrial, TrialManifest
-from usv_faults.storage.trials import quality_check_trial, write_events, write_manifest
+from usv_faults.storage.trials import REQUIRED_TRIAL_FILES, quality_check_trial, write_events, write_manifest
 
 
 def _stable_trial_seed(master_seed: int, trial_id: str) -> int:
@@ -33,6 +33,10 @@ class SyntheticUSVSource:
         for trial, duration_s, fault_start_s, fault_end_s in trial_specs:
             trial_dir = out_dir / trial.trial_id
             trial_dir.mkdir(parents=True, exist_ok=True)
+            if all((trial_dir / filename).exists() for filename in REQUIRED_TRIAL_FILES):
+                quality_check_trial(trial_dir)
+                created.append(trial_dir)
+                continue
             seed = _stable_trial_seed(int(self.config.randomness["master_seed"]), trial.trial_id)
             telemetry = self._generate_trial(trial, duration_s, fault_start_s, fault_end_s, seed)
             telemetry.to_parquet(trial_dir / "telemetry.parquet", index=False)

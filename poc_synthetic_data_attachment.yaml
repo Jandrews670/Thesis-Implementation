@@ -1,0 +1,192 @@
+# Draft simulation-data attachment for the proof of concept.
+# Move or copy this into implementation/configs/poc_synthetic.yaml once code begins.
+
+attachment_id: poc_synthetic_usv_v0
+source_type: synthetic_usv_propulsion
+schema_version: 0.1
+created_for: proof_of_concept_plan
+
+output:
+  raw_trial_root: data/raw/trials
+  processed_dataset_id: ds_poc_synthetic_0001
+
+randomness:
+  master_seed: 20260514
+  per_trial_seed_strategy: deterministic_from_trial_id
+
+sampling:
+  raw_sample_rate_hz: 10000
+  window_ms: 100
+  stride_ms: 100
+  current_decimated_hz: 1000
+
+channel_profile:
+  name: report_2109
+  expected_input_dim: 2109
+  vibration_channels:
+    - motor_vibration
+    - rig_vibration
+  current_channels:
+    - motor_current
+  scalar_channels:
+    - voltage
+    - water_temperature
+    - pwm_command
+  scalar_features:
+    - mean
+    - variance
+    - peak_to_peak
+
+nominal_motor:
+  shaft_frequency_hz: 75.0
+  pwm_command: 0.5
+  voltage_v: 16.0
+  water_temperature_c: 22.0
+
+baselines:
+  B0_nominal:
+    description: clean propeller, stable voltage, ambient temperature, steady PWM
+    voltage_v: 16.0
+    water_temperature_c: 22.0
+    drag_multiplier: 1.0
+    vibration_noise_multiplier: 1.0
+    pwm_profile: steady
+  B1_voltage:
+    description: reduced supply voltage representing battery cycling
+    voltage_v: 12.0
+    water_temperature_c: 22.0
+    drag_multiplier: 1.0
+    vibration_noise_multiplier: 1.05
+    pwm_profile: steady
+  B2_biofouling:
+    description: increased drag and altered propeller resonance
+    voltage_v: 16.0
+    water_temperature_c: 22.0
+    drag_multiplier: 1.35
+    vibration_noise_multiplier: 1.2
+    pwm_profile: steady
+  B3_thermal:
+    description: equatorial thermal shift
+    voltage_v: 16.0
+    water_temperature_c: 30.0
+    drag_multiplier: 1.05
+    vibration_noise_multiplier: 1.1
+    pwm_profile: steady
+  B4_shock_ventilation:
+    description: low-frequency disturbance plus propeller ventilation PWM transients
+    voltage_v: 16.0
+    water_temperature_c: 22.0
+    drag_multiplier: 1.0
+    vibration_noise_multiplier: 1.8
+    pwm_profile: ventilation
+    ventilation:
+      interval_s: 5.0
+      drop_pwm: 0.10
+      surge_pwm: 0.90
+      drop_duration_s_range: [0.5, 1.5]
+      surge_duration_s: 0.5
+
+fault_profiles:
+  bearing_impulse:
+    description: high-frequency vibration impulses with sidebands
+    affects:
+      motor_vibration: strong
+      rig_vibration: medium
+      motor_current: weak
+  propeller_imbalance:
+    description: stronger 1x and 2x shaft-frequency vibration harmonics
+    affects:
+      motor_vibration: strong
+      rig_vibration: medium
+      motor_current: medium
+  shaft_rub:
+    description: intermittent broadband bursts and elevated current draw
+    withheld_for_novelty_test: true
+    affects:
+      motor_vibration: strong
+      rig_vibration: medium
+      motor_current: strong
+  electrical_phase_noise:
+    description: current ripple modulation without a dominant vibration signature
+    withheld_for_novelty_test: optional
+    affects:
+      motor_vibration: weak
+      rig_vibration: weak
+      motor_current: strong
+
+trial_sets:
+  healthy_training:
+    duration_s: 300
+    trials:
+      - trial_id: 2026-05-14_POC_B0_nominal_T001
+        baseline: B0_nominal
+      - trial_id: 2026-05-14_POC_B0_nominal_T002
+        baseline: B0_nominal
+      - trial_id: 2026-05-14_POC_B0_nominal_T003
+        baseline: B0_nominal
+  healthy_domain_shift:
+    duration_s: 180
+    trials:
+      - trial_id: 2026-05-14_POC_B1_voltage_T001
+        baseline: B1_voltage
+      - trial_id: 2026-05-14_POC_B2_biofouling_T001
+        baseline: B2_biofouling
+      - trial_id: 2026-05-14_POC_B3_thermal_T001
+        baseline: B3_thermal
+      - trial_id: 2026-05-14_POC_B4_shock_ventilation_T001
+        baseline: B4_shock_ventilation
+  known_fault_dictionary:
+    duration_s: 180
+    fault_start_s: 60
+    fault_end_s: 150
+    trials:
+      - trial_id: 2026-05-14_POC_B0_fault_bearing_T001
+        baseline: B0_nominal
+        fault: bearing_impulse
+      - trial_id: 2026-05-14_POC_B0_fault_bearing_T002
+        baseline: B0_nominal
+        fault: bearing_impulse
+      - trial_id: 2026-05-14_POC_B0_fault_imbalance_T001
+        baseline: B0_nominal
+        fault: propeller_imbalance
+      - trial_id: 2026-05-14_POC_B0_fault_imbalance_T002
+        baseline: B0_nominal
+        fault: propeller_imbalance
+  cross_domain_faults:
+    duration_s: 180
+    fault_start_s: 60
+    fault_end_s: 150
+    baselines:
+      - B1_voltage
+      - B2_biofouling
+      - B3_thermal
+      - B4_shock_ventilation
+    faults:
+      - bearing_impulse
+      - propeller_imbalance
+  novel_fault_test:
+    duration_s: 180
+    fault_start_s: 60
+    fault_end_s: 150
+    trials:
+      - trial_id: 2026-05-14_POC_B0_fault_shaft_rub_T001
+        baseline: B0_nominal
+        fault: shaft_rub
+
+splits:
+  strategy: by_trial
+  healthy_train:
+    - 2026-05-14_POC_B0_nominal_T001
+    - 2026-05-14_POC_B0_nominal_T002
+  healthy_validation:
+    - 2026-05-14_POC_B0_nominal_T003
+  dictionary_build:
+    - 2026-05-14_POC_B0_fault_bearing_T001
+    - 2026-05-14_POC_B0_fault_bearing_T002
+    - 2026-05-14_POC_B0_fault_imbalance_T001
+    - 2026-05-14_POC_B0_fault_imbalance_T002
+  evaluation:
+    include_trial_sets:
+      - healthy_domain_shift
+      - cross_domain_faults
+      - novel_fault_test

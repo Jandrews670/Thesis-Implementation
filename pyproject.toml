@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "usv-faults"
+version = "0.1.0"
+description = "Proof-of-concept USV fault detection and isolation pipeline."
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+  "numpy",
+  "pandas",
+  "pyarrow",
+  "pyyaml",
+]
+
+[project.optional-dependencies]
+ml = ["scipy", "torch", "scikit-learn", "hdbscan", "joblib", "matplotlib"]
+dev = ["pytest", "ruff"]
+
+[project.scripts]
+usv-faults = "usv_faults.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"

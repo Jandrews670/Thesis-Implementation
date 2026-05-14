@@ -1,0 +1,22 @@
+dataset_id: ds_poc_synthetic_0001
+source_type: synthetic
+raw_trial_root: data/raw/trials
+windowing:
+  window_ms: 100
+  stride_ms: 100
+preprocessing:
+  vibration_sample_rate_hz: 10000
+  current_sample_rate_hz: 1000
+  scalar_features: [mean, variance, peak_to_peak]
+  expected_input_dim: 2109
+scaling:
+  method: standard
+  fit_on: healthy_train_only
+split:
+  strategy: by_trial
+  train:
+    - 2026-05-14_POC_B0_nominal_T001
+    - 2026-05-14_POC_B0_nominal_T002
+  validation:
+    - 2026-05-14_POC_B0_nominal_T003
+  test: []

@@ -1,0 +1,15 @@
+model:
+  input_dim: 2109
+  hidden_dims: [2048, 1024]
+  latent_dim: 420
+  masking_noise: 0.30
+  l1_lambda: 0.0001
+training:
+  optimizer: adam
+  learning_rate: 0.001
+  batch_size: 256
+  epochs: 100
+  early_stopping: true
+threshold:
+  method: validation_percentile
+  target_false_positive_rate: 0.02

@@ -1,0 +1,75 @@
+attachment_id: poc_synthetic_usv_smoke_v0
+source_type: synthetic_usv_propulsion
+schema_version: 0.1
+created_for: objective_1_smoke_test
+
+output:
+  raw_trial_root: data/raw/trials_smoke
+  processed_dataset_id: ds_poc_synthetic_smoke
+
+randomness:
+  master_seed: 20260514
+  per_trial_seed_strategy: deterministic_from_trial_id
+
+sampling:
+  raw_sample_rate_hz: 10000
+  window_ms: 100
+  stride_ms: 100
+  current_decimated_hz: 1000
+
+channel_profile:
+  name: report_2109
+  expected_input_dim: 2109
+  vibration_channels:
+    - motor_vibration
+    - rig_vibration
+  current_channels:
+    - motor_current
+  scalar_channels:
+    - voltage
+    - water_temperature
+    - pwm_command
+  scalar_features:
+    - mean
+    - variance
+    - peak_to_peak
+
+nominal_motor:
+  shaft_frequency_hz: 75.0
+  pwm_command: 0.5
+  voltage_v: 16.0
+  water_temperature_c: 22.0
+
+baselines:
+  B0_nominal:
+    description: clean propeller, stable voltage, ambient temperature, steady PWM
+    voltage_v: 16.0
+    water_temperature_c: 22.0
+    drag_multiplier: 1.0
+    vibration_noise_multiplier: 1.0
+    pwm_profile: steady
+
+fault_profiles:
+  bearing_impulse:
+    description: high-frequency vibration impulses with sidebands
+
+trial_sets:
+  healthy_training:
+    duration_s: 1
+    trials:
+      - trial_id: 2026-05-14_POC_B0_nominal_T001
+        baseline: B0_nominal
+  known_fault_dictionary:
+    duration_s: 2
+    fault_start_s: 0.5
+    fault_end_s: 1.5
+    trials:
+      - trial_id: 2026-05-14_POC_B0_fault_bearing_T001
+        baseline: B0_nominal
+        fault: bearing_impulse
+
+splits:
+  strategy: by_trial
+  healthy_train:
+    - 2026-05-14_POC_B0_nominal_T001
+  healthy_validation: []

@@ -7,6 +7,8 @@ from typing import List, Optional
 
 from usv_faults.clustering.fault_dictionary import build_fault_dictionary
 from usv_faults.data_sources.synthetic_usv import SyntheticUSVSource
+from usv_faults.evaluation.reports import evaluate_pipeline
+from usv_faults.evaluation.trial_runner import run_replay_trial
 from usv_faults.preprocessing.datasets import make_dataset
 from usv_faults.storage.preview import write_preview_csv
 from usv_faults.storage.trials import quality_check_trial
@@ -77,6 +79,24 @@ def _cmd_build_dictionary(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_evaluate(args: argparse.Namespace) -> int:
+    result = evaluate_pipeline(args.model, args.dictionary, args.dataset, args.out)
+    print(
+        f"Evaluated model={args.model} dictionary={args.dictionary} on {result['window_count']} windows; "
+        f"anomalies={result['anomaly_count']}; reports={result['out_dir']}"
+    )
+    return 0
+
+
+def _cmd_run(args: argparse.Namespace) -> int:
+    result = run_replay_trial(args.source, args.trial, args.model, args.dictionary, args.out)
+    print(
+        f"Replay {result['trial_id']} wrote {result['window_count']} decisions to {result['out_path']}; "
+        f"anomalies={result['anomaly_count']}, known={result['known_count']}, novel={result['novel_count']}"
+    )
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="usv-faults",
@@ -117,12 +137,20 @@ def build_parser() -> argparse.ArgumentParser:
     dictionary.add_argument("--out", required=True, type=Path)
     dictionary.set_defaults(func=_cmd_build_dictionary)
 
-    for name, milestone in [
-        ("evaluate", "Milestone 5"),
-        ("run", "Milestone 5"),
-    ]:
-        placeholder = subparsers.add_parser(name)
-        placeholder.set_defaults(func=lambda args, n=name, m=milestone: _not_implemented(n, m))
+    evaluate = subparsers.add_parser("evaluate", help="Write POC evaluation metric reports.")
+    evaluate.add_argument("--model", required=True, type=Path)
+    evaluate.add_argument("--dictionary", required=True, type=Path)
+    evaluate.add_argument("--dataset", required=True, type=Path)
+    evaluate.add_argument("--out", required=True, type=Path)
+    evaluate.set_defaults(func=_cmd_evaluate)
+
+    run = subparsers.add_parser("run", help="Run replay or live inference.")
+    run.add_argument("--source", required=True)
+    run.add_argument("--trial", required=True, type=Path)
+    run.add_argument("--model", required=True, type=Path)
+    run.add_argument("--dictionary", required=True, type=Path)
+    run.add_argument("--out", required=False, type=Path, default=Path("runs/logs"))
+    run.set_defaults(func=_cmd_run)
 
     return parser
 

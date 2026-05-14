@@ -12,6 +12,8 @@ The current implementation supports:
 - reconstruction-threshold selection
 - HDBSCAN latent clustering
 - Ledoit-Wolf/Mahalanobis fault dictionary generation
+- synthetic POC evaluation reports
+- raw-trial replay decision logs
 - training artifacts and basic plots
 
 It does not yet support FedRep, DANN, external public datasets, or live Teensy/Raspberry Pi collection. Those are later milestones.
@@ -424,11 +426,11 @@ To add another fault trial, add it under a fault trial set, set `fault_start_s` 
 - Only synthetic data is supported.
 - Latent vectors are currently exported by `build-dictionary`, not by `train-sdae`.
 - HDBSCAN, Ledoit-Wolf covariance, and chi-square thresholds require the package dependencies listed in `pyproject.toml`.
-- There is no live hardware ingestion yet.
-- The plotting helper only creates simple loss/error PNGs.
+- There is no live hardware ingestion yet; `run` currently supports replay only.
+- SWaP-C power, CPU, and RAM measurements are not measured by the offline smoke commands.
 - The current smoke config is for fast validation, not final thesis evidence.
 
-For final thesis runs, use longer trials, the full model config, and the evaluation milestones once implemented.
+For final thesis runs, use longer trials and the full model config before interpreting metrics scientifically.
 
 ## 15. Build the Fault Dictionary
 
@@ -529,3 +531,106 @@ It verifies:
 - `dictionary_manifest.yaml` records `scipy.stats.chi2.ppf`
 - `dictionary.json` records `sklearn.covariance.LedoitWolf`
 - at least one dictionary entry is created for `bearing_impulse`
+
+## 17. Evaluate the POC Pipeline
+
+Run evaluation against a processed dataset:
+
+```powershell
+.\.venv\Scripts\python.exe -m usv_faults.cli evaluate `
+  --model artifacts/models/run_poc_sdae_smoke_objective_5 `
+  --dictionary artifacts/dictionaries/dict_poc_b0_smoke_objective_5 `
+  --dataset data/processed/datasets/ds_poc_synthetic_training_smoke `
+  --out runs/reports/objective_5_smoke
+```
+
+This writes:
+
+```text
+poc_detection_metrics.csv
+poc_isolation_metrics.csv
+poc_cross_domain_metrics.csv
+poc_window_decisions.csv
+poc_summary.md
+```
+
+Current metric behavior:
+
+- false positive rate is measured on healthy windows
+- true fault detection rate is measured on fault windows flagged by the SDAE threshold
+- true fault isolation rate is measured on known fault anomaly windows matched to the correct dictionary label
+- fault isolation latency is measured from the first labelled fault window to the first correct known/novel decision
+- DBCV is calculated when the dictionary clustering artifact contains at least two non-noise clusters; the smoke dictionary has one cluster, so DBCV is marked `not_available_single_cluster`
+- B1-B4 cross-domain rows are written and marked `not_available` when the dataset has no shifted-baseline known fault anomaly windows
+- model artifact size is recorded from the model artifact directory and `model.pt`
+- power, CPU, and RAM are explicitly not measured in this offline POC command
+
+The smoke Objective 5 run currently reports:
+
+```text
+false_positive_rate: 0.04
+true_fault_detection_rate: 1.0
+true_fault_isolation_rate: 1.0
+cross-domain B1-B4 status: not_available
+```
+
+## 18. Replay a Raw Trial
+
+Replay a raw synthetic trial through the trained model and dictionary:
+
+```powershell
+.\.venv\Scripts\python.exe -m usv_faults.cli run `
+  --source replay `
+  --trial data/raw/trials_training_smoke/2026-05-14_POC_B0_fault_bearing_T001 `
+  --model artifacts/models/run_poc_sdae_smoke_objective_5 `
+  --dictionary artifacts/dictionaries/dict_poc_b0_smoke_objective_5 `
+  --out runs/logs/objective_5_smoke
+```
+
+The replay command rebuilds 100 ms windows from the raw trial folder, applies the saved scaler and SDAE, maintains a rolling latent buffer, runs HDBSCAN when enough latent vectors are available, and applies the Mahalanobis dictionary decision to anomaly windows.
+
+Replay writes:
+
+```text
+runs/logs/objective_5_smoke/<trial_id>_replay_decisions.csv
+```
+
+Columns:
+
+```text
+timestamp_s
+trial_id
+reconstruction_error
+threshold
+is_anomaly
+cluster_label
+dictionary_decision
+matched_fault_id
+matched_fault_label
+mahalanobis_distance_sq
+```
+
+For the current smoke replay, the B0 `bearing_impulse` trial produced 30 decision rows, 17 anomaly windows, 17 known decisions, and 0 novel decisions.
+
+One-command Objective 5 smoke check:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\run_objective_5_checks.ps1
+```
+
+## 19. Objective 5 Test Coverage
+
+`tests/test_objective_5.py` runs a reduced end-to-end Milestone 5 path:
+
+```text
+synthetic trials -> dataset -> tiny SDAE -> HDBSCAN dictionary -> evaluate -> replay
+```
+
+It verifies:
+
+- evaluation writes detection, isolation, cross-domain, and summary artifacts
+- detection metrics include false positive and true fault detection columns
+- isolation metrics include true fault isolation and DBCV status columns
+- cross-domain metrics include B1-B4 rows
+- replay writes the required decision-log columns
+- replay produces at least one anomaly and at least one known dictionary decision

@@ -79,6 +79,8 @@ def build_fault_dictionary(model_dir: Path, dataset_dir: Path, config_path: Path
         "source_model_id": source_model_id,
         "source_dataset_id": source_dataset_id,
         "latent_dim": latent_dim,
+        "source_dataset_windowing": dataset_manifest.get("windowing", {}),
+        "source_dataset_preprocessing": dataset_manifest.get("preprocessing", {}),
         "clustering": {
             "method": cluster_result.method,
             "config": cluster_result.details,
@@ -114,6 +116,8 @@ def build_fault_dictionary(model_dir: Path, dataset_dir: Path, config_path: Path
         "config_file": str(config_path),
         "latent_dim": latent_dim,
         "reconstruction_threshold": extraction.reconstruction_threshold,
+        "source_dataset_windowing": dataset_manifest.get("windowing", {}),
+        "source_dataset_preprocessing": dataset_manifest.get("preprocessing", {}),
         "hdbscan": {
             "method": cluster_result.method,
             "details": cluster_result.details,
@@ -151,6 +155,15 @@ def build_fault_dictionary(model_dir: Path, dataset_dir: Path, config_path: Path
         "known_fault_match_rate": dictionary["decision_summary"].get("known_fault_match_rate"),
         "withheld_novel_rate": dictionary["decision_summary"].get("withheld_novel_rate"),
     }
+
+
+def load_fault_dictionary(dictionary_dir: Path) -> Dict[str, object]:
+    with (dictionary_dir / "dictionary.json").open("r", encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def decide_latent(latent: np.ndarray, dictionary: Dict[str, object]) -> Dict[str, object]:
+    return _nearest_entry(latent, list(dictionary.get("entries", [])))
 
 
 def _dictionary_candidate_mask(frame: pd.DataFrame, config: Dict[str, object]) -> pd.Series:
@@ -285,6 +298,7 @@ def _nearest_entry(latent: np.ndarray, entries: List[Dict[str, object]]) -> Dict
         "decision": "known" if distance <= threshold else "novel",
         "fault_id": entry["fault_id"],
         "label": entry["label"],
+        "cluster_label": entry.get("cluster_label"),
         "distance": float(distance),
         "threshold": threshold,
     }

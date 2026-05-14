@@ -78,6 +78,36 @@ For smoke training, the SDAE latent dimension is `16`, so the Mahalanobis known/
 
 The Objective 4 tests verify the statistical pieces directly and then run a reduced integration path through synthetic data, dataset generation, SDAE training, HDBSCAN clustering, Ledoit-Wolf dictionary creation, and artifact writing.
 
+Run the objective 5 checks:
+
+```powershell
+.\scripts\run_objective_5_checks.ps1
+```
+
+Objective 5 evaluates a trained model and dictionary against a processed dataset:
+
+```powershell
+.\.venv\Scripts\python.exe -m usv_faults.cli evaluate --model artifacts/models/run_poc_sdae_smoke_objective_5 --dictionary artifacts/dictionaries/dict_poc_b0_smoke_objective_5 --dataset data/processed/datasets/ds_poc_synthetic_training_smoke --out runs/reports/objective_5_smoke
+```
+
+It writes:
+
+```text
+poc_detection_metrics.csv
+poc_isolation_metrics.csv
+poc_cross_domain_metrics.csv
+poc_window_decisions.csv
+poc_summary.md
+```
+
+Objective 5 also adds replay runtime logging from a raw trial folder:
+
+```powershell
+.\.venv\Scripts\python.exe -m usv_faults.cli run --source replay --trial data/raw/trials_training_smoke/2026-05-14_POC_B0_fault_bearing_T001 --model artifacts/models/run_poc_sdae_smoke_objective_5 --dictionary artifacts/dictionaries/dict_poc_b0_smoke_objective_5 --out runs/logs/objective_5_smoke
+```
+
+Replay logs contain reconstruction error, threshold state, anomaly state, rolling HDBSCAN cluster label, dictionary decision, matched fault ID/label, and squared Mahalanobis distance per 100 ms window.
+
 The first runnable objective is synthetic data attachment and quality checking:
 
 ```powershell

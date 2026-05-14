@@ -22,31 +22,58 @@ class LatentExtraction:
     feature_names: List[str]
 
 
-def extract_latent_windows(model_dir: Path, dataset_dir: Path) -> LatentExtraction:
-    model, model_config, feature_names = load_sdae_model(model_dir)
-    scaler = StandardFeatureScaler.load(model_dir / "scaler.joblib")
-    threshold = _read_threshold(model_dir / "threshold.json")
+@dataclass
+class WindowInference:
+    reconstruction_errors: np.ndarray
+    latents: np.ndarray
+    threshold: float
+    is_anomaly: np.ndarray
+    latent_columns: List[str]
+    model_config: Dict[str, object]
+    feature_names: List[str]
 
+
+def extract_latent_windows(model_dir: Path, dataset_dir: Path) -> LatentExtraction:
     windows = pd.read_parquet(dataset_dir / "windows.parquet")
     labels = pd.read_parquet(dataset_dir / "labels.parquet")
     if len(windows) != len(labels):
         raise ValueError("windows and labels row counts do not match")
+
+    inference = infer_windows(model_dir, windows)
+    reconstruction_errors = inference.reconstruction_errors
+    latents = inference.latents
+
+    latent_columns = inference.latent_columns
+    latent_frame = pd.DataFrame(latents, columns=latent_columns)
+    frame = pd.concat([labels.reset_index(drop=True), latent_frame], axis=1)
+    frame.insert(len(labels.columns), "reconstruction_error", reconstruction_errors)
+    frame.insert(len(labels.columns) + 1, "is_anomaly", inference.is_anomaly)
+    return LatentExtraction(
+        frame=frame,
+        latent_columns=latent_columns,
+        reconstruction_threshold=inference.threshold,
+        model_config=inference.model_config,
+        feature_names=inference.feature_names,
+    )
+
+
+def infer_windows(model_dir: Path, windows: pd.DataFrame) -> WindowInference:
+    model, model_config, feature_names = load_sdae_model(model_dir)
+    scaler = StandardFeatureScaler.load(model_dir / "scaler.joblib")
+    threshold = _read_threshold(model_dir / "threshold.json")
     if feature_names and list(windows.columns) != feature_names:
         windows = windows[feature_names]
 
     values = windows.to_numpy(dtype=np.float32)
     scaled = scaler.transform(values)
     reconstruction_errors, latents = _infer(model, scaled)
-
     latent_columns = [f"latent_{index:04d}" for index in range(latents.shape[1])]
-    latent_frame = pd.DataFrame(latents, columns=latent_columns)
-    frame = pd.concat([labels.reset_index(drop=True), latent_frame], axis=1)
-    frame.insert(len(labels.columns), "reconstruction_error", reconstruction_errors)
-    frame.insert(len(labels.columns) + 1, "is_anomaly", reconstruction_errors > threshold)
-    return LatentExtraction(
-        frame=frame,
+    return WindowInference(
+        reconstruction_errors=reconstruction_errors,
+        latents=latents,
+        threshold=threshold,
+        is_anomaly=reconstruction_errors > threshold,
         latent_columns=latent_columns,
-        reconstruction_threshold=threshold,
         model_config=model_config,
         feature_names=feature_names,
     )
@@ -94,4 +121,3 @@ def _torch_load(path: Path) -> Dict[str, object]:
         return torch.load(path, map_location=torch.device("cpu"), weights_only=False)
     except TypeError:
         return torch.load(path, map_location=torch.device("cpu"))
-

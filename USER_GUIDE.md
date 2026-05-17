@@ -548,13 +548,15 @@ Dictionary generation is controlled by `configs/hdbscan.yaml`.
 Current smoke/default parameters:
 
 ```yaml
-rolling_window_size: 300
+rolling_window_size: 30
 min_cluster_size: 15
 min_samples: 15
 metric: euclidean
 cluster_selection_method: eom
 allow_single_cluster: true
 mahalanobis_confidence: 0.99
+min_runtime_cluster_size: 15
+cluster_match_min_member_fraction: 0.50
 dictionary_baseline_id: 0
 known_fault_labels:
   - bearing_impulse
@@ -572,6 +574,8 @@ The dictionary builder:
 - clusters candidate latents using `hdbscan.HDBSCAN`
 - estimates each cluster covariance and precision matrix using `sklearn.covariance.LedoitWolf`
 - computes the squared-Mahalanobis known/novel threshold with `scipy.stats.chi2.ppf`
+
+At evaluation/replay time, known/novel decisions are made from a rolling HDBSCAN cluster rather than from one isolated latent point. The runtime path keeps the last 30 latent windows, clusters the anomalous latents inside that temporal buffer, finds the current point's runtime cluster, compares that cluster centroid to stored dictionary centroids, and also requires a configurable fraction of runtime cluster members to fall inside the stored Mahalanobis boundary.
 
 For the current smoke model, `latent_dim: 16`, so the 99 percent Mahalanobis threshold is:
 
@@ -668,7 +672,7 @@ Current metric behavior:
 
 - false positive rate is measured on healthy windows
 - true fault detection rate is measured on fault windows flagged by the SDAE threshold
-- true fault isolation rate is measured on known fault anomaly windows matched to the correct dictionary label
+- true fault isolation rate is measured on known fault anomaly windows whose rolling runtime cluster matches the correct dictionary label
 - fault isolation latency is measured from the first labelled fault window to the first correct known/novel decision
 - DBCV is calculated when the dictionary clustering artifact contains at least two non-noise clusters; the smoke dictionary has one cluster, so DBCV is marked `not_available_single_cluster`
 - B1-B4 cross-domain rows are written and marked `not_available` when the dataset has no shifted-baseline known fault anomaly windows
@@ -717,7 +721,7 @@ Replay a raw synthetic trial through the trained model and dictionary:
   --out runs/logs/objective_5_smoke
 ```
 
-The replay command rebuilds 100 ms windows from the raw trial folder, applies the saved scaler and SDAE, maintains a rolling latent buffer, runs HDBSCAN when enough latent vectors are available, and applies the Mahalanobis dictionary decision to anomaly windows.
+The replay command rebuilds 100 ms windows from the raw trial folder, applies the saved scaler and SDAE, maintains a 30-window rolling latent buffer, runs HDBSCAN on the anomalous latents inside that buffer when enough anomaly vectors are available, and applies the Mahalanobis dictionary decision to the current runtime cluster.
 
 Replay writes:
 
@@ -735,12 +739,16 @@ threshold
 is_anomaly
 cluster_label
 dictionary_decision
+decision_basis
 matched_fault_id
 matched_fault_label
 mahalanobis_distance_sq
+mahalanobis_threshold
+cluster_support_count
+cluster_member_inlier_fraction
 ```
 
-For the current smoke replay, the B0 `bearing_impulse` trial produced 30 decision rows, 17 anomaly windows, 17 known decisions, and 0 novel decisions.
+For the current smoke replay, the B0 `bearing_impulse` trial produced 30 decision rows and 17 anomaly windows. Only windows with enough accumulated anomaly-cluster support can become known; earlier anomaly windows are marked as insufficient support or cluster noise.
 
 One-command Objective 5 smoke check:
 

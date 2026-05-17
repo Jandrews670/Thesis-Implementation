@@ -12,7 +12,8 @@ import numpy as np
 import pandas as pd
 import torch
 
-from usv_faults.clustering.fault_dictionary import decide_latent, load_fault_dictionary
+from usv_faults.clustering.fault_dictionary import decide_latent_cluster, load_fault_dictionary
+from usv_faults.clustering.hdbscan_pipeline import cluster_latents
 from usv_faults.clustering.latent import extract_latent_windows, load_sdae_model
 from usv_faults.clustering.mahalanobis import squared_mahalanobis
 from usv_faults.config import read_yaml
@@ -76,32 +77,107 @@ def _decisions_for_frame(
     dictionary: Dict[str, object],
 ) -> pd.DataFrame:
     rows: List[Dict[str, object]] = []
-    for index, row in frame.iterrows():
-        latent = row[latent_columns].to_numpy(dtype=np.float64)
-        is_anomaly = bool(row["is_anomaly"])
-        match = decide_latent(latent, dictionary) if is_anomaly else {"decision": "healthy"}
-        rows.append(
-            {
-                "row_index": int(index),
-                "trial_id": row["trial_id"],
-                "window_start_s": float(row["window_start_s"]),
-                "window_end_s": float(row["window_end_s"]),
-                "baseline_id": int(row["baseline_id"]),
-                "baseline_name": row["baseline_name"],
-                "fault_label": row["fault_label"],
-                "is_fault": bool(row["is_fault"]),
-                "reconstruction_error": float(row["reconstruction_error"]),
-                "is_anomaly": is_anomaly,
-                "dictionary_decision": match.get("decision"),
-                "matched_fault_id": match.get("fault_id"),
-                "matched_fault_label": match.get("label"),
-                "matched_cluster_label": match.get("cluster_label"),
-                "mahalanobis_distance_sq": match.get("distance"),
-                "mahalanobis_threshold": match.get("threshold"),
-                **{column: float(row[column]) for column in latent_columns},
-            }
-        )
+    cluster_config = dict(dictionary.get("clustering", {}).get("config", {}) or {})
+    cluster_config.pop("sample_count", None)
+    rolling_window_size = int(cluster_config.get("rolling_window_size", 30))
+    min_runtime_cluster_size = int(
+        cluster_config.get("min_runtime_cluster_size", cluster_config.get("min_cluster_size", 15))
+    )
+
+    for _trial_id, trial_frame in frame.reset_index(drop=True).groupby("trial_id", sort=False):
+        rolling_latents: List[np.ndarray] = []
+        rolling_anomaly_flags: List[bool] = []
+        for index, row in trial_frame.iterrows():
+            latent = row[latent_columns].to_numpy(dtype=np.float64)
+            is_anomaly = bool(row["is_anomaly"])
+            rolling_latents.append(latent)
+            rolling_anomaly_flags.append(is_anomaly)
+            if len(rolling_latents) > rolling_window_size:
+                rolling_latents = rolling_latents[-rolling_window_size:]
+                rolling_anomaly_flags = rolling_anomaly_flags[-rolling_window_size:]
+
+            runtime_cluster_label = -1
+            if is_anomaly:
+                anomaly_latents = [
+                    value for value, flag in zip(rolling_latents, rolling_anomaly_flags) if flag
+                ]
+                runtime_cluster_label, match = _current_cluster_match(
+                    np.asarray(anomaly_latents, dtype=np.float64),
+                    cluster_config,
+                    dictionary,
+                    min_runtime_cluster_size,
+                )
+            else:
+                match = {"decision": "healthy", "decision_basis": "healthy"}
+            rows.append(
+                {
+                    "row_index": int(index),
+                    "trial_id": row["trial_id"],
+                    "window_start_s": float(row["window_start_s"]),
+                    "window_end_s": float(row["window_end_s"]),
+                    "baseline_id": int(row["baseline_id"]),
+                    "baseline_name": row["baseline_name"],
+                    "fault_label": row["fault_label"],
+                    "is_fault": bool(row["is_fault"]),
+                    "reconstruction_error": float(row["reconstruction_error"]),
+                    "is_anomaly": is_anomaly,
+                    "runtime_cluster_label": int(runtime_cluster_label),
+                    "dictionary_decision": match.get("decision"),
+                    "decision_basis": match.get("decision_basis"),
+                    "matched_fault_id": match.get("fault_id"),
+                    "matched_fault_label": match.get("label"),
+                    "matched_cluster_label": match.get("cluster_label"),
+                    "mahalanobis_distance_sq": match.get("distance"),
+                    "mahalanobis_threshold": match.get("threshold"),
+                    "cluster_support_count": match.get("cluster_support_count"),
+                    "cluster_member_inlier_fraction": match.get("cluster_member_inlier_fraction"),
+                    **{column: float(row[column]) for column in latent_columns},
+                }
+            )
     return pd.DataFrame(rows)
+
+
+def _current_cluster_match(
+    anomaly_latents: np.ndarray,
+    config: Dict[str, object],
+    dictionary: Dict[str, object],
+    min_runtime_cluster_size: int,
+) -> Tuple[int, Dict[str, object]]:
+    if len(anomaly_latents) < min_runtime_cluster_size:
+        return -1, {
+            "decision": "novel_insufficient_support",
+            "decision_basis": "rolling_cluster_to_dictionary",
+            "cluster_support_count": int(len(anomaly_latents)),
+        }
+    try:
+        result = cluster_latents(anomaly_latents, config)
+    except Exception:
+        return -1, {
+            "decision": "novel_cluster_failed",
+            "decision_basis": "rolling_cluster_to_dictionary",
+            "cluster_support_count": int(len(anomaly_latents)),
+        }
+    if len(result.labels) == 0:
+        return -1, {
+            "decision": "novel_insufficient_support",
+            "decision_basis": "rolling_cluster_to_dictionary",
+            "cluster_support_count": int(len(anomaly_latents)),
+        }
+    runtime_cluster_label = int(result.labels[-1])
+    if runtime_cluster_label < 0:
+        return runtime_cluster_label, {
+            "decision": "novel_cluster_noise",
+            "decision_basis": "rolling_cluster_to_dictionary",
+            "cluster_support_count": int(np.sum(np.asarray(result.labels) == runtime_cluster_label)),
+        }
+    cluster_latents_for_label = anomaly_latents[np.asarray(result.labels, dtype=np.int64) == runtime_cluster_label]
+    if len(cluster_latents_for_label) < min_runtime_cluster_size:
+        return runtime_cluster_label, {
+            "decision": "novel_insufficient_support",
+            "decision_basis": "rolling_cluster_to_dictionary",
+            "cluster_support_count": int(len(cluster_latents_for_label)),
+        }
+    return runtime_cluster_label, decide_latent_cluster(cluster_latents_for_label, dictionary)
 
 
 def _detection_metrics(frame: pd.DataFrame, model_dir: Path) -> List[Dict[str, object]]:
@@ -177,7 +253,7 @@ def _isolation_metrics(
             "fault_anomaly_count": int(len(fault_anomalies)),
             "known_fault_anomaly_count": int(len(known_fault_anomalies)),
             "true_fault_isolation_rate": _mean_or_none(correct_known),
-            "withheld_novel_rate": _mean_or_none(withheld_anomalies["dictionary_decision"].eq("novel"))
+            "withheld_novel_rate": _mean_or_none(_novel_decision_mask(withheld_anomalies["dictionary_decision"]))
             if len(withheld_anomalies)
             else None,
             "fault_isolation_latency_s": _overall_latency(decisions, known_fault_labels),
@@ -195,7 +271,7 @@ def _isolation_metrics(
                 "fault_anomaly_count": int(len(group)),
                 "known_fault_anomaly_count": int(len(trial_known)),
                 "true_fault_isolation_rate": _mean_or_none(_correct_known_mask(trial_known)),
-                "withheld_novel_rate": _mean_or_none(group["dictionary_decision"].eq("novel"))
+                "withheld_novel_rate": _mean_or_none(_novel_decision_mask(group["dictionary_decision"]))
                 if str(fault_label) in withheld_fault_labels
                 else None,
                 "fault_isolation_latency_s": _latency_for_trial(decisions, str(trial_id), str(fault_label), known_fault_labels),
@@ -530,6 +606,10 @@ def _correct_known_mask(frame: pd.DataFrame) -> pd.Series:
     )
 
 
+def _novel_decision_mask(values: pd.Series) -> pd.Series:
+    return values.astype(str).str.startswith("novel")
+
+
 def _latency_for_trial(
     decisions: pd.DataFrame,
     trial_id: str,
@@ -547,7 +627,7 @@ def _latency_for_trial(
     if fault_label in known_fault_labels:
         isolated = trial_fault[_correct_known_mask(trial_fault)]
     else:
-        isolated = trial_fault[trial_fault["dictionary_decision"].eq("novel")]
+        isolated = trial_fault[_novel_decision_mask(trial_fault["dictionary_decision"])]
     if isolated.empty:
         return None
     return float(max(0.0, float(isolated["window_start_s"].min()) - onset))

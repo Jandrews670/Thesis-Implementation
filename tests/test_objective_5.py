@@ -93,12 +93,18 @@ class ObjectiveFiveTests(unittest.TestCase):
                     "is_anomaly",
                     "cluster_label",
                     "dictionary_decision",
+                    "decision_basis",
                     "matched_fault_id",
                     "matched_fault_label",
                     "mahalanobis_distance_sq",
+                    "mahalanobis_threshold",
+                    "cluster_support_count",
+                    "cluster_member_inlier_fraction",
                 ],
             )
             self.assertIn("known", set(decisions["dictionary_decision"]))
+            known = decisions[decisions["dictionary_decision"].eq("known")]
+            self.assertGreater(float(known["cluster_member_inlier_fraction"].max()), 0.0)
 
 
 def _build_smoke_artifacts(
@@ -134,7 +140,8 @@ def _build_smoke_artifacts(
 
     cluster_config = copy.deepcopy(read_yaml(Path("configs/hdbscan.yaml")))
     cluster_config["min_cluster_size"] = 3
-    cluster_config["min_samples"] = 3
+    cluster_config["min_samples"] = 1
+    cluster_config["min_runtime_cluster_size"] = 3
     cluster_config["known_fault_labels"] = ["bearing_impulse"]
     cluster_config_path = root / "hdbscan.yaml"
     write_yaml(cluster_config_path, cluster_config)

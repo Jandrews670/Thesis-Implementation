@@ -75,6 +75,8 @@ class ObjectiveSevenTests(unittest.TestCase):
             decisions = pd.read_csv(reports_dir / "poc_window_decisions.csv")
             fault_decisions = decisions[decisions["is_fault"].astype(bool)]
             self.assertGreater(int(fault_decisions["is_anomaly"].sum()), 0)
+            self.assertIn("runtime_cluster_label", decisions.columns)
+            self.assertIn("cluster_member_inlier_fraction", decisions.columns)
 
 
 def _write_fixture_mat(path: Path, variable: str, sample_rate_hz: int, kind: str, seed: int) -> None:

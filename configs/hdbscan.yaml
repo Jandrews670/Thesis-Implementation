@@ -1,10 +1,12 @@
-rolling_window_size: 300
+rolling_window_size: 30
 min_cluster_size: 15
 min_samples: 15
 metric: euclidean
 cluster_selection_method: eom
 allow_single_cluster: true
 mahalanobis_confidence: 0.99
+min_runtime_cluster_size: 15
+cluster_match_min_member_fraction: 0.50
 dictionary_baseline_id: 0
 known_fault_labels:
   - bearing_impulse

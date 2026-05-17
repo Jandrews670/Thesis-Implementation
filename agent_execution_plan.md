@@ -440,11 +440,13 @@ baseline_id
 Run HDBSCAN on latent vectors from anomaly windows. Start with config values:
 
 ```yaml
-rolling_window_size: 300
+rolling_window_size: 30
 min_cluster_size: 15
 min_samples: 15
 metric: euclidean
 cluster_selection_method: eom
+min_runtime_cluster_size: 15
+cluster_match_min_member_fraction: 0.50
 ```
 
 Keep all settings configurable.
@@ -550,6 +552,8 @@ Implement `run --source replay` using the same pipeline components:
 trial reader -> window builder -> scaler -> model -> reconstruction error -> latent buffer -> clustering/dictionary -> decision log
 ```
 
+Known/novel decisions should compare the current rolling anomaly cluster to stored dictionary clusters, not a single latent point to the dictionary. Use the last 30 latent windows, cluster the anomalous latents inside that temporal buffer, use HDBSCAN labels for the current point, then apply centroid Mahalanobis distance to dictionary entries and a member-inlier fraction gate.
+
 Write:
 
 ```text
@@ -566,9 +570,13 @@ threshold
 is_anomaly
 cluster_label
 dictionary_decision
+decision_basis
 matched_fault_id
 matched_fault_label
 mahalanobis_distance_sq
+mahalanobis_threshold
+cluster_support_count
+cluster_member_inlier_fraction
 ```
 
 ### Verification Gate
@@ -666,6 +674,7 @@ Current CWRU parameters:
 - `expected_input_dim: 1200`
 - SDAE hidden dimensions `[128, 64]`, latent dimension `16`, 8 epochs
 - HDBSCAN `min_cluster_size: 3`, `min_samples: 1`, `allow_single_cluster: false`
+- rolling decision window `30`, `min_runtime_cluster_size: 3`, `cluster_match_min_member_fraction: 0.50`
 - Mahalanobis confidence `0.99`, giving a 16-D threshold of `31.9999`
 
 ### Verification Gate

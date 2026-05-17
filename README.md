@@ -133,13 +133,15 @@ Objective 4 extracts SDAE latent vectors, runs `hdbscan.HDBSCAN`, and writes a L
 The default dictionary parameters are:
 
 ```yaml
-rolling_window_size: 300
+rolling_window_size: 30
 min_cluster_size: 15
 min_samples: 15
 metric: euclidean
 cluster_selection_method: eom
 allow_single_cluster: true
 mahalanobis_confidence: 0.99
+min_runtime_cluster_size: 15
+cluster_match_min_member_fraction: 0.50
 dictionary_baseline_id: 0
 known_fault_labels: [bearing_impulse, propeller_imbalance]
 withheld_fault_labels: [shaft_rub]
@@ -180,7 +182,7 @@ Objective 5 also adds replay runtime logging from a raw trial folder:
 .\.venv\Scripts\python.exe -m usv_faults.cli run --source replay --trial data/raw/trials_training_smoke/2026-05-14_POC_B0_fault_bearing_T001 --model artifacts/models/run_poc_sdae_smoke_objective_5 --dictionary artifacts/dictionaries/dict_poc_b0_smoke_objective_5 --out runs/logs/objective_5_smoke
 ```
 
-Replay logs contain reconstruction error, threshold state, anomaly state, rolling HDBSCAN cluster label, dictionary decision, matched fault ID/label, and squared Mahalanobis distance per 100 ms window.
+Dictionary decisions now use rolling cluster matching. The runtime path keeps the last 30 latent windows, clusters the anomalous latents inside that temporal buffer with HDBSCAN, then compares the current runtime cluster centroid and member inlier fraction against stored dictionary clusters. Replay logs contain reconstruction error, threshold state, runtime cluster label, dictionary decision, matched fault ID/label, cluster support count, member inlier fraction, and squared Mahalanobis centroid distance.
 
 Run the objective 7 public-data check:
 

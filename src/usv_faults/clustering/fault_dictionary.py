@@ -83,7 +83,7 @@ def build_fault_dictionary(model_dir: Path, dataset_dir: Path, config_path: Path
         "source_dataset_preprocessing": dataset_manifest.get("preprocessing", {}),
         "clustering": {
             "method": cluster_result.method,
-            "config": cluster_result.details,
+            "config": _clustering_details(config, cluster_result),
         },
         "mahalanobis": threshold,
         "known_fault_labels": list(config.get("known_fault_labels", [])),
@@ -120,7 +120,7 @@ def build_fault_dictionary(model_dir: Path, dataset_dir: Path, config_path: Path
         "source_dataset_preprocessing": dataset_manifest.get("preprocessing", {}),
         "hdbscan": {
             "method": cluster_result.method,
-            "details": cluster_result.details,
+            "details": _clustering_details(config, cluster_result),
         },
         "mahalanobis": threshold,
         "known_fault_labels": list(config.get("known_fault_labels", [])),
@@ -164,6 +164,49 @@ def load_fault_dictionary(dictionary_dir: Path) -> Dict[str, object]:
 
 def decide_latent(latent: np.ndarray, dictionary: Dict[str, object]) -> Dict[str, object]:
     return _nearest_entry(latent, list(dictionary.get("entries", [])))
+
+
+def decide_latent_cluster(latents: np.ndarray, dictionary: Dict[str, object]) -> Dict[str, object]:
+    values = np.asarray(latents, dtype=np.float64)
+    if values.ndim != 2 or values.shape[0] == 0:
+        return {"decision": "novel_insufficient_support", "decision_basis": "rolling_cluster_to_dictionary"}
+    entries = list(dictionary.get("entries", []))
+    if not entries:
+        return {"decision": "novel", "decision_basis": "rolling_cluster_to_dictionary"}
+
+    cluster_config = dictionary.get("clustering", {}).get("config", {}) or {}
+    required_fraction = float(cluster_config.get("cluster_match_min_member_fraction", 0.50))
+    centroid = values.mean(axis=0)
+    scored: List[Tuple[float, float, float, Dict[str, object]]] = []
+    for entry in entries:
+        entry_centroid = np.asarray(entry["centroid"], dtype=np.float64)
+        entry_precision = np.asarray(entry["precision"], dtype=np.float64)
+        centroid_distance = squared_mahalanobis(centroid, entry_centroid, entry_precision)
+        threshold = float(entry["mahalanobis_threshold"])
+        member_distances = np.asarray(
+            [squared_mahalanobis(row, entry_centroid, entry_precision) for row in values],
+            dtype=np.float64,
+        )
+        inlier_fraction = float(np.mean(member_distances <= threshold))
+        scored.append((centroid_distance, inlier_fraction, threshold, entry))
+
+    matching = [
+        item for item in scored if item[0] <= item[2] and item[1] >= required_fraction
+    ]
+    distance, inlier_fraction, threshold, entry = min(matching or scored, key=lambda item: item[0])
+    is_known = bool(matching)
+    return {
+        "decision": "known" if is_known else "novel",
+        "decision_basis": "rolling_cluster_to_dictionary",
+        "fault_id": entry["fault_id"],
+        "label": entry["label"],
+        "cluster_label": entry.get("cluster_label"),
+        "distance": float(distance),
+        "threshold": threshold,
+        "cluster_support_count": int(values.shape[0]),
+        "cluster_member_inlier_fraction": inlier_fraction,
+        "cluster_match_min_member_fraction": required_fraction,
+    }
 
 
 def _dictionary_candidate_mask(frame: pd.DataFrame, config: Dict[str, object]) -> pd.Series:
@@ -335,6 +378,18 @@ def _withheld_anomaly_count(frame: pd.DataFrame, config: Dict[str, object]) -> i
         return 0
     mask = frame["is_anomaly"].astype(bool) & frame["fault_label"].astype(str).isin(withheld_fault_labels)
     return int(mask.sum())
+
+
+def _clustering_details(config: Dict[str, object], cluster_result: ClusterResult) -> Dict[str, object]:
+    details = dict(cluster_result.details)
+    details["rolling_window_size"] = int(config.get("rolling_window_size", 30))
+    details["min_runtime_cluster_size"] = int(
+        config.get("min_runtime_cluster_size", config.get("min_cluster_size", 15))
+    )
+    details["cluster_match_min_member_fraction"] = float(
+        config.get("cluster_match_min_member_fraction", 0.50)
+    )
+    return details
 
 
 def _value_counts(values: Iterable[str]) -> Dict[str, int]:

@@ -1,10 +1,12 @@
-rolling_window_size: 300
+rolling_window_size: 30
 min_cluster_size: 3
 min_samples: 1
 metric: euclidean
 cluster_selection_method: eom
 allow_single_cluster: false
 mahalanobis_confidence: 0.99
+min_runtime_cluster_size: 3
+cluster_match_min_member_fraction: 0
 dictionary_baseline_id: 0
 known_fault_labels:
   - inner_race_fault_007

@@ -49,6 +49,103 @@ Then call the CLI as:
 .\.venv\Scripts\python.exe -m usv_faults.cli --help
 ```
 
+## 1.1 Containerised Linux Setup
+
+Use Docker when you want the Windows development machine and Raspberry Pi to run the same Linux software environment. The project image is a full training/evaluation image, not an inference-only image. It installs PyTorch, HDBSCAN, SciPy, scikit-learn, Matplotlib, OpenBLAS/LAPACK, and compiler tools so the Pi can run training and dictionary generation as well as replay/evaluation.
+
+For the detailed Raspberry Pi checklist, including Docker Engine installation, serial-device mounting, and cleanup commands, see:
+
+```text
+RASPBERRY_PI_SETUP.md
+```
+
+From Windows, start Docker Desktop first, then run:
+
+```powershell
+.\scripts\docker_build.ps1
+.\scripts\docker_test.ps1
+```
+
+By default the Docker build installs CPU-only PyTorch from:
+
+```text
+https://download.pytorch.org/whl/cpu
+```
+
+This keeps the image much smaller than the default Linux PyPI Torch install, which may download CUDA packages that are not useful on Raspberry Pi. If the Pi/ARM64 build cannot resolve a CPU-index Torch wheel, fall back to normal PyPI resolution:
+
+```powershell
+.\scripts\docker_build.ps1 -TorchIndexUrl ""
+```
+
+Open a Linux shell in the project container:
+
+```powershell
+.\scripts\docker_shell.ps1
+```
+
+Build an ARM64 image from Windows for Raspberry Pi compatibility testing:
+
+```powershell
+.\scripts\docker_build.ps1 -Platform linux/arm64 -Tag usv-faults:pi
+```
+
+From Raspberry Pi OS or another 64-bit Linux install on the Pi:
+
+```bash
+uname -m
+getconf LONG_BIT
+dpkg --print-architecture
+bash scripts/docker_build.sh
+bash scripts/docker_test.sh
+```
+
+The expected architecture checks are `aarch64`, `64`, and `arm64`. If the Pi reports a 32-bit userland, reinstall a 64-bit OS before trying to run the full training container.
+
+Linux fallback to normal PyPI Torch resolution:
+
+```bash
+TORCH_INDEX_URL= bash scripts/docker_build.sh
+```
+
+The container smoke test runs:
+
+```text
+python -m unittest discover -s tests
+python -m usv_faults.cli --help
+Objective 1 smoke path
+Objective 2 smoke path
+Objective 3 smoke path
+Objective 4 smoke path
+Objective 5 smoke path
+```
+
+You can run individual Linux smoke scripts inside or outside Docker:
+
+```bash
+bash scripts/run_objective_1_checks.sh
+bash scripts/run_objective_2_checks.sh
+bash scripts/run_objective_3_checks.sh
+bash scripts/run_objective_4_checks.sh
+bash scripts/run_objective_5_checks.sh
+```
+
+The container mounts the repository into `/app`, so generated `data/`, `artifacts/`, and `runs/` folders appear on the host machine. These folders are ignored during image builds so trained models and datasets are not baked into the Docker image.
+
+For future live Teensy/Raspberry Pi serial work, pass the serial device into the container:
+
+```bash
+docker compose run --rm --device /dev/ttyACM0:/dev/ttyACM0 usv-faults bash
+```
+
+If the Pi user cannot access the device, add the user to the relevant Linux group, commonly `dialout`, then log out and back in:
+
+```bash
+sudo usermod -aG dialout "$USER"
+```
+
+Containerisation standardises Python and Linux dependencies, but target-hardware measurements still need to be collected on the Pi. In particular, CPU usage, RAM usage, power draw, serial latency, and thermal throttling cannot be proven by the Windows container alone.
+
 ## 2. Choose the Config Set
 
 There are two useful config paths.

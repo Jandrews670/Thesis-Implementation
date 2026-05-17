@@ -14,6 +14,77 @@ This creates `.venv` with `--system-site-packages` so the project can reuse the 
 
 On Windows/Python 3.9, `hdbscan==0.8.40` is pinned because that version has a prebuilt wheel in this environment. Newer HDBSCAN releases may try to compile from source and require Microsoft C++ Build Tools.
 
+## Docker and Raspberry Pi Linux
+
+The recommended Raspberry Pi path is to run the same Linux container during Windows development and on the Pi. The image is intentionally a full training image: it includes PyTorch, HDBSCAN, SciPy, scikit-learn, Matplotlib, build tools, OpenBLAS/LAPACK, and the package itself. This keeps the current SDAE training, dictionary generation, evaluation, and future FedRep/DANN training paths inside one reproducible Linux environment.
+
+For the full Pi setup checklist, see [RASPBERRY_PI_SETUP.md](RASPBERRY_PI_SETUP.md).
+
+Start Docker Desktop first, then build and test from Windows:
+
+```powershell
+.\scripts\docker_build.ps1
+.\scripts\docker_test.ps1
+```
+
+The default Docker build installs CPU-only PyTorch from `https://download.pytorch.org/whl/cpu`. That avoids the very large CUDA dependency downloads that are unnecessary for Raspberry Pi. If a particular ARM64/Pi Python environment cannot resolve the CPU index wheel, fall back to the normal PyPI Torch resolver:
+
+```powershell
+.\scripts\docker_build.ps1 -TorchIndexUrl ""
+```
+
+Open a shell in the container:
+
+```powershell
+.\scripts\docker_shell.ps1
+```
+
+Build an ARM64 image from Windows for Raspberry Pi compatibility testing:
+
+```powershell
+.\scripts\docker_build.ps1 -Platform linux/arm64 -Tag usv-faults:pi
+```
+
+On the Raspberry Pi, install Docker Engine, clone or copy this repository, then run:
+
+```bash
+bash scripts/docker_build.sh
+bash scripts/docker_test.sh
+```
+
+The short Pi checklist is:
+
+```bash
+uname -m
+getconf LONG_BIT
+dpkg --print-architecture
+docker compose version
+cd ~/usv-faults
+bash scripts/docker_build.sh
+bash scripts/docker_test.sh
+```
+
+Linux fallback to PyPI Torch resolution:
+
+```bash
+TORCH_INDEX_URL= bash scripts/docker_build.sh
+```
+
+The Linux/container smoke checks use Bash scripts:
+
+```bash
+bash scripts/run_container_checks.sh
+bash scripts/run_objective_5_checks.sh
+```
+
+For future live Teensy access, run the container with the serial device mounted, for example:
+
+```bash
+docker compose run --rm --device /dev/ttyACM0:/dev/ttyACM0 usv-faults bash
+```
+
+Containerisation makes the Python/Linux software environment reproducible, but it does not remove the need to validate Pi-specific serial permissions, CPU/RAM/power measurements, and hardware timing on the actual Raspberry Pi.
+
 Run the objective 1 checks:
 
 ```powershell

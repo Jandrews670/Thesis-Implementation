@@ -1,0 +1,20 @@
+services:
+  usv-faults:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        TORCH_INDEX_URL: ${TORCH_INDEX_URL:-https://download.pytorch.org/whl/cpu}
+    image: usv-faults:dev
+    working_dir: /app
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONUNBUFFERED: "1"
+      PYTHONPATH: /app/src
+      MPLCONFIGDIR: /tmp/usv_faults_matplotlib_cache
+    volumes:
+      - .:/app
+    command: python -m usv_faults.cli --help
+    # For future live Teensy/Raspberry Pi serial access, uncomment and adjust:
+    # devices:
+    #   - "/dev/ttyACM0:/dev/ttyACM0"

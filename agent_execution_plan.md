@@ -53,7 +53,12 @@ usv-faults run --source replay --trial data/raw/trials/2026-05-14_POC_B0_fault_b
 As of 2026-05-14, Milestones 1-3 have been implemented and smoke-verified. Future agents should treat this as a working foundation, not as final experimental evidence.
 
 - Run commands from `Implementation/` using `.\.venv\Scripts\python.exe -m usv_faults.cli` and `PYTHONPATH=src`.
-- The environment is Python 3.9 and intentionally avoids mandatory `typer`, `pydantic`, `pytest`, `scikit-learn`, `joblib`, `scipy`, and `matplotlib` dependencies.
+- The environment is Python 3.9. The package declares the numerical stack used by the current pipeline, including PyTorch, HDBSCAN, scikit-learn, SciPy, joblib, and Matplotlib.
+- A Docker/Linux path now exists for Windows-to-Raspberry-Pi reproducibility. Use `Dockerfile`, `docker-compose.yml`, and `scripts/docker_*.ps1` or `scripts/docker_*.sh`.
+- The container is intentionally a full training/evaluation image, not an inference-only image. It installs the numerical stack and build tools needed for PyTorch, HDBSCAN, SciPy, scikit-learn, and Matplotlib on Linux/ARM64.
+- Use `bash scripts/run_container_checks.sh` inside the container to run unit tests plus Objective 1-5 smoke paths.
+- Use `RASPBERRY_PI_SETUP.md` as the Pi deployment checklist. It records 64-bit OS checks, Docker Engine setup, Pi build/test commands, serial-device mounting, and cleanup commands.
+- The verified Windows container uses CPU-only PyTorch by default through `TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu`; if ARM64 resolution fails on the Pi, build with `TORCH_INDEX_URL= bash scripts/docker_build.sh`.
 - The smoke configs are fast verification configs. The full configs remain the intended POC path and should be run deliberately when runtime/storage are acceptable.
 - Raw synthetic signal data is `telemetry.parquet`; `events.csv` is expected to contain only event markers.
 - Synthetic `attach-data` should reuse existing canonical raw trial folders rather than overwriting them.

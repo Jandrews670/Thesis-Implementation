@@ -14,12 +14,14 @@ from torch.utils.data import DataLoader, TensorDataset
 
 from usv_faults.config import read_yaml, write_yaml
 from usv_faults.models.sdae import SparseDenoisingAutoencoder
+from usv_faults.performance import PerformanceSampler, sdae_compute_estimates
 from usv_faults.preprocessing.feature_scaling import StandardFeatureScaler
 from usv_faults.training.simple_plots import write_histogram_png, write_line_plot_png
 from usv_faults.training.threshold_search import validation_percentile_threshold
 
 
 def train_sdae(dataset_dir: Path, config_path: Path, out_dir: Path) -> Dict[str, object]:
+    performance_sampler = PerformanceSampler().start()
     config = read_yaml(config_path)
     dataset_manifest = read_yaml(dataset_dir / "dataset_manifest.yaml")
     windows = pd.read_parquet(dataset_dir / "windows.parquet")
@@ -112,6 +114,17 @@ def train_sdae(dataset_dir: Path, config_path: Path, out_dir: Path) -> Dict[str,
     metrics = _metrics(labels, all_errors, train_mask.to_numpy(), validation_mask.to_numpy(), threshold)
     metrics["validation_fallback_used"] = validation_fallback
     metrics["loss_decreased"] = bool(history[-1]["train_loss"] <= history[0]["train_loss"])
+    performance_stats = performance_sampler.stop()
+    compute_estimates = sdae_compute_estimates(
+        model_config,
+        train_windows=int(train_mask.sum()),
+        epochs=epochs,
+    )
+    metrics["performance"] = {
+        "scope": "train_sdae",
+        **performance_stats,
+        **compute_estimates,
+    }
 
     out_dir.mkdir(parents=True, exist_ok=True)
     plots_dir = out_dir / "plots"
@@ -165,6 +178,8 @@ def train_sdae(dataset_dir: Path, config_path: Path, out_dir: Path) -> Dict[str,
         "threshold": threshold["threshold"],
         "out_dir": str(out_dir),
         "loss_decreased": metrics["loss_decreased"],
+        "training_wall_time_s": performance_stats["wall_time_s"],
+        "training_peak_rss_mb": performance_stats["peak_rss_mb"],
     }
 
 

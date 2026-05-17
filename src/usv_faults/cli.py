@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from usv_faults.clustering.fault_dictionary import build_fault_dictionary
+from usv_faults.data_sources.cwru import CWRUBearingSource
 from usv_faults.data_sources.synthetic_usv import SyntheticUSVSource
 from usv_faults.evaluation.reports import evaluate_pipeline
 from usv_faults.evaluation.trial_runner import run_replay_trial
@@ -21,11 +22,14 @@ def _not_implemented(name: str, milestone: str) -> int:
 
 
 def _cmd_attach_data(args: argparse.Namespace) -> int:
-    if args.source != "synthetic":
-        print("Only the synthetic source is implemented in objective 1.", file=sys.stderr)
+    if args.source == "synthetic":
+        created = SyntheticUSVSource.from_config_path(args.config).attach(args.out)
+    elif args.source in {"cwru", "external_cwru"}:
+        created = CWRUBearingSource.from_config_path(args.config).attach(args.out)
+    else:
+        print("Supported sources are: synthetic, cwru.", file=sys.stderr)
         return 2
-    created = SyntheticUSVSource.from_config_path(args.config).attach(args.out)
-    print(f"Attached {len(created)} synthetic trials under {args.out}")
+    print(f"Attached {len(created)} {args.source} trials under {args.out}")
     return 0
 
 

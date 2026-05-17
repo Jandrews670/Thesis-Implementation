@@ -35,16 +35,42 @@ class ObjectiveFiveTests(unittest.TestCase):
             self.assertTrue((reports_dir / "poc_detection_metrics.csv").exists())
             self.assertTrue((reports_dir / "poc_isolation_metrics.csv").exists())
             self.assertTrue((reports_dir / "poc_cross_domain_metrics.csv").exists())
+            self.assertTrue((reports_dir / "poc_performance_metrics.csv").exists())
             self.assertTrue((reports_dir / "poc_summary.md").exists())
+            self.assertGreater(evaluation["performance_metric_count"], 0)
 
             detection = pd.read_csv(reports_dir / "poc_detection_metrics.csv")
             isolation = pd.read_csv(reports_dir / "poc_isolation_metrics.csv")
             cross_domain = pd.read_csv(reports_dir / "poc_cross_domain_metrics.csv")
+            performance = pd.read_csv(reports_dir / "poc_performance_metrics.csv")
             self.assertIn("false_positive_rate", detection.columns)
             self.assertIn("true_fault_detection_rate", detection.columns)
             self.assertIn("true_fault_isolation_rate", isolation.columns)
             self.assertIn("dbcv_status", isolation.columns)
             self.assertEqual(set(cross_domain["baseline_id"]), {1, 2, 3, 4})
+            performance_metrics = set(performance["metric"])
+            self.assertIn("estimated_forward_linear_flops_per_window", performance_metrics)
+            self.assertIn("estimated_training_linear_flops_total", performance_metrics)
+            self.assertIn("training_cpu_usage_percent_all_cores", performance_metrics)
+            self.assertIn("training_peak_ram_mb", performance_metrics)
+            self.assertIn("inference_cpu_usage_percent_all_cores", performance_metrics)
+            self.assertIn("inference_peak_ram_mb", performance_metrics)
+            self.assertGreater(
+                float(performance.loc[performance["metric"].eq("estimated_forward_linear_flops_per_window"), "value"].iloc[0]),
+                0.0,
+            )
+            self.assertGreater(
+                float(performance.loc[performance["metric"].eq("estimated_training_linear_flops_total"), "value"].iloc[0]),
+                0.0,
+            )
+            self.assertGreater(
+                float(performance.loc[performance["metric"].eq("training_peak_ram_mb"), "value"].iloc[0]),
+                0.0,
+            )
+            self.assertGreater(
+                float(performance.loc[performance["metric"].eq("inference_peak_ram_mb"), "value"].iloc[0]),
+                0.0,
+            )
 
             replay = run_replay_trial(
                 "replay",

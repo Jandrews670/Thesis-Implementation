@@ -167,9 +167,12 @@ It writes:
 poc_detection_metrics.csv
 poc_isolation_metrics.csv
 poc_cross_domain_metrics.csv
+poc_performance_metrics.csv
 poc_window_decisions.csv
 poc_summary.md
 ```
+
+`poc_performance_metrics.csv` records Objective 5 performance indicators for the trained SDAE artifact. It includes parameter count, estimated forward FLOPs per 100 ms window, estimated training FLOPs, measured training CPU/RAM from `train-sdae`, and measured offline inference CPU/RAM/latency from `evaluate`.
 
 Objective 5 also adds replay runtime logging from a raw trial folder:
 
@@ -178,6 +181,24 @@ Objective 5 also adds replay runtime logging from a raw trial folder:
 ```
 
 Replay logs contain reconstruction error, threshold state, anomaly state, rolling HDBSCAN cluster label, dictionary decision, matched fault ID/label, and squared Mahalanobis distance per 100 ms window.
+
+Run the objective 7 public-data check:
+
+```powershell
+.\scripts\run_objective_7_public_checks.ps1
+```
+
+Objective 7 attaches selected public CWRU bearing `.mat` files, converts them into canonical raw trial folders, and runs the current Objective 2-5 path on a reduced vibration-only profile:
+
+```text
+data/raw/public_cwru
+data/processed/datasets/ds_public_cwru_objective_7
+artifacts/models/run_public_cwru_sdae_objective_7
+artifacts/dictionaries/dict_public_cwru_objective_7
+runs/reports/objective_7_public_cwru
+```
+
+The CWRU config uses one 12 kHz drive-end vibration channel, 100 ms windows, and `expected_input_dim: 1200`. It does not fabricate missing current channels to match the 2109-D USV schema. The generated public report is labelled as a public CWRU realism check, not final thesis evidence.
 
 The first runnable objective is synthetic data attachment and quality checking:
 

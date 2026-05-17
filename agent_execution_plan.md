@@ -65,6 +65,8 @@ As of 2026-05-14, Milestones 1-3 have been implemented and smoke-verified. Futur
 - The SDAE should default to ReLU hidden layers and Sigmoid output activation. Record both as config fields and in `run_manifest.yaml`.
 - The current smoke SDAE is deliberately small; do not infer full architecture performance from it.
 - Current plots are simple PNG training artifacts, not model architecture visualisations.
+- Objective 5 now writes `poc_performance_metrics.csv`. Keep training CPU/RAM in `metrics.json` under `performance`, and keep evaluation-time inference CPU/RAM/FLOP indicators in the Objective 5 report folder.
+- Milestone 7 has a runnable public-data path using selected CWRU bearing `.mat` files. It deliberately uses a reduced 1200-D vibration-only profile and does not pad missing current channels to the 2109-D USV schema. Use `scripts/run_objective_7_public_checks.ps1` for the Windows public-data check.
 
 ### Key Existing Source Documents
 
@@ -625,11 +627,11 @@ Success means baseline SDAE, FedRep, and DANN can all be evaluated by the same e
 
 ## 10. Milestone 7: Public Dataset Adapter
 
-Start this after the synthetic POC works.
+Status: CWRU public-data adapter implemented and smoke-tested through Objective 5. Paderborn remains the preferred final public source because it includes current and vibration, but the official Paderborn downloads are large RAR archives; the runnable Objective 7 path uses CWRU as the reduced vibration-only public realism check.
 
 ### Preferred Dataset
 
-Implement a Paderborn adapter first because it includes both current and vibration signals.
+Paderborn is still the preferred dataset for final alignment because it includes both current and vibration signals.
 
 The adapter must convert downloaded public data into canonical raw trial folders with:
 
@@ -641,9 +643,45 @@ channel_profile: <explicit reduced or mapped profile>
 
 Do not silently fake missing channels to match 2109 dimensions. If the public data profile differs, create a separate dataset config and record the reduced profile in the manifest.
 
+Implemented CWRU path:
+
+```powershell
+.\.venv\Scripts\python.exe -m usv_faults.cli attach-data --source cwru --config configs/public_cwru.yaml --out data/raw/public_cwru
+.\.venv\Scripts\python.exe -m usv_faults.cli make-dataset --config configs/dataset_public_cwru.yaml --out data/processed/datasets/ds_public_cwru_objective_7
+.\.venv\Scripts\python.exe -m usv_faults.cli train-sdae --dataset data/processed/datasets/ds_public_cwru_objective_7 --config configs/baseline_sdae_public_cwru.yaml --out artifacts/models/run_public_cwru_sdae_objective_7
+.\.venv\Scripts\python.exe -m usv_faults.cli build-dictionary --model artifacts/models/run_public_cwru_sdae_objective_7 --dataset data/processed/datasets/ds_public_cwru_objective_7 --config configs/hdbscan_public_cwru.yaml --out artifacts/dictionaries/dict_public_cwru_objective_7
+.\.venv\Scripts\python.exe -m usv_faults.cli evaluate --model artifacts/models/run_public_cwru_sdae_objective_7 --dictionary artifacts/dictionaries/dict_public_cwru_objective_7 --dataset data/processed/datasets/ds_public_cwru_objective_7 --out runs/reports/objective_7_public_cwru
+```
+
+The one-command check is:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\run_objective_7_public_checks.ps1
+```
+
+Current CWRU parameters:
+
+- 12 kHz drive-end vibration only
+- 100 ms non-overlapping windows
+- `expected_input_dim: 1200`
+- SDAE hidden dimensions `[128, 64]`, latent dimension `16`, 8 epochs
+- HDBSCAN `min_cluster_size: 3`, `min_samples: 1`, `allow_single_cluster: false`
+- Mahalanobis confidence `0.99`, giving a 16-D threshold of `31.9999`
+
 ### Verification Gate
 
 Success means the same `make-dataset`, `train-sdae`, `build-dictionary`, and `evaluate` commands run on the external dataset with a clearly labelled POC-only report.
+
+Current CWRU evidence from `runs/reports/objective_7_public_cwru`:
+
+- 300 windows, 1200 features, 5 public-data trials
+- false positive rate 0.0167
+- true fault detection rate 1.0
+- true fault isolation rate 0.8333
+- withheld outer-race novel rate 1.0
+- DBCV 0.3339
+
+This is development evidence only. It demonstrates that the current Objective 2-5 code path runs on public bearing data, but it does not replace USV-domain validation.
 
 ## 11. Test Plan
 

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import csv
+import json
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -8,11 +10,14 @@ from typing import Dict, List, Optional, Tuple
 import hdbscan
 import numpy as np
 import pandas as pd
+import torch
 
 from usv_faults.clustering.fault_dictionary import decide_latent, load_fault_dictionary
-from usv_faults.clustering.latent import extract_latent_windows
+from usv_faults.clustering.latent import extract_latent_windows, load_sdae_model
 from usv_faults.clustering.mahalanobis import squared_mahalanobis
 from usv_faults.config import read_yaml
+from usv_faults.performance import PerformanceSampler, sdae_compute_estimates
+from usv_faults.preprocessing.feature_scaling import StandardFeatureScaler
 
 
 def evaluate_pipeline(model_dir: Path, dictionary_dir: Path, dataset_dir: Path, out_dir: Path) -> Dict[str, object]:
@@ -31,10 +36,12 @@ def evaluate_pipeline(model_dir: Path, dictionary_dir: Path, dataset_dir: Path, 
     detection_rows = _detection_metrics(frame, model_dir)
     isolation_rows = _isolation_metrics(decisions, dictionary, dbcv_score, dbcv_status)
     cross_domain_rows = _cross_domain_metrics(decisions, extraction.latent_columns, dictionary)
+    performance_rows = _performance_metrics(model_dir, dataset_dir)
 
     _write_csv(out_dir / "poc_detection_metrics.csv", detection_rows)
     _write_csv(out_dir / "poc_isolation_metrics.csv", isolation_rows)
     _write_csv(out_dir / "poc_cross_domain_metrics.csv", cross_domain_rows)
+    _write_csv(out_dir / "poc_performance_metrics.csv", performance_rows)
 
     summary = _summary(
         model_dir=model_dir,
@@ -47,6 +54,7 @@ def evaluate_pipeline(model_dir: Path, dictionary_dir: Path, dataset_dir: Path, 
         detection_rows=detection_rows,
         isolation_rows=isolation_rows,
         cross_domain_rows=cross_domain_rows,
+        performance_rows=performance_rows,
     )
     (out_dir / "poc_summary.md").write_text(summary, encoding="utf-8")
 
@@ -58,6 +66,7 @@ def evaluate_pipeline(model_dir: Path, dictionary_dir: Path, dataset_dir: Path, 
         "true_fault_detection_rate": _metric_value(detection_rows, "overall", "true_fault_detection_rate"),
         "true_fault_isolation_rate": _metric_value(isolation_rows, "overall", "true_fault_isolation_rate"),
         "dictionary_id": dictionary.get("dictionary_id", dictionary_dir.name),
+        "performance_metric_count": len(performance_rows),
     }
 
 
@@ -224,6 +233,295 @@ def _cross_domain_metrics(
     return rows
 
 
+def _performance_metrics(model_dir: Path, dataset_dir: Path) -> List[Dict[str, object]]:
+    model, model_config, feature_names = load_sdae_model(model_dir)
+    model.eval()
+    parameter_count = int(sum(parameter.numel() for parameter in model.parameters()))
+    nonzero_parameter_count = int(
+        sum(int(torch.count_nonzero(parameter.detach()).item()) for parameter in model.parameters())
+    )
+    compute_estimates = sdae_compute_estimates(model_config)
+    training_performance = _training_performance(model_dir)
+    inference_rows = _inference_benchmark_rows(model, model_config, feature_names, model_dir, dataset_dir)
+    rows = [
+        _performance_row(
+            "model",
+            "model_parameter_count",
+            parameter_count,
+            "parameters",
+            "counted_from_loaded_model",
+            "Counted from the loaded PyTorch model parameters.",
+        ),
+        _performance_row(
+            "model",
+            "model_nonzero_parameter_count",
+            nonzero_parameter_count,
+            "parameters",
+            "counted_from_loaded_model",
+            "Counted non-zero values from the loaded PyTorch model parameters.",
+        ),
+        _performance_row(
+            "model",
+            "estimated_parameter_memory_fp32_mb",
+            parameter_count * 4.0 / (1024.0 * 1024.0),
+            "MB",
+            "estimated_from_parameter_count",
+            "Parameter count multiplied by 4 bytes for FP32 weights.",
+        ),
+        _performance_row(
+            "compute_estimate",
+            "estimated_forward_linear_macs_per_window",
+            compute_estimates["estimated_forward_linear_macs_per_window"],
+            "MACs per 100 ms window",
+            "estimated_from_sdae_layer_sizes",
+            "Sum of input_dim * output_dim for each SDAE Linear layer.",
+        ),
+        _performance_row(
+            "compute_estimate",
+            "estimated_forward_linear_flops_per_window",
+            compute_estimates["estimated_forward_linear_flops_per_window"],
+            "FLOPs per 100 ms window",
+            "estimated_from_sdae_layer_sizes",
+            "Linear-layer forward estimate. Multiply-adds count as 2 FLOPs plus bias additions.",
+        ),
+        _performance_row(
+            "compute_estimate",
+            "estimated_training_linear_flops_per_window",
+            compute_estimates["estimated_training_linear_flops_per_window"],
+            "FLOPs per training window",
+            "estimated_from_sdae_layer_sizes",
+            "Approximate training cost per window, using 3x the forward linear FLOP estimate.",
+        ),
+    ]
+    rows.extend(_training_performance_rows(training_performance))
+    rows.extend(inference_rows)
+    return rows
+
+
+def _training_performance(model_dir: Path) -> Dict[str, object]:
+    metrics_path = model_dir / "metrics.json"
+    if not metrics_path.exists():
+        return {}
+    with metrics_path.open("r", encoding="utf-8") as handle:
+        metrics = json.load(handle)
+    performance = metrics.get("performance")
+    return performance if isinstance(performance, dict) else {}
+
+
+def _training_performance_rows(performance: Dict[str, object]) -> List[Dict[str, object]]:
+    if not performance:
+        status = "not_available_legacy_model_artifact"
+        return [
+            _performance_row("training", "estimated_training_linear_flops_total", "", "FLOPs", status, "No training performance block was found in metrics.json."),
+            _performance_row("training", "training_wall_time_s", "", "seconds", status, "No training performance block was found in metrics.json."),
+            _performance_row("training", "training_cpu_time_s", "", "CPU seconds", status, "No training performance block was found in metrics.json."),
+            _performance_row("training", "training_cpu_usage_percent_all_cores", "", "percent", status, "No training performance block was found in metrics.json."),
+            _performance_row("training", "training_peak_ram_mb", "", "MB", status, "No training performance block was found in metrics.json."),
+        ]
+    status = "measured_during_train_sdae"
+    return [
+        _performance_row(
+            "training",
+            "estimated_training_linear_flops_total",
+            performance.get("estimated_training_linear_flops_total", ""),
+            "FLOPs",
+            "estimated_from_sdae_layer_sizes",
+            "Training windows multiplied by epochs and the approximate per-window training FLOP estimate.",
+        ),
+        _performance_row(
+            "training",
+            "train_window_epochs",
+            performance.get("train_window_epochs", ""),
+            "window-epochs",
+            "counted_during_train_sdae",
+            "Healthy training windows multiplied by configured epochs.",
+        ),
+        _performance_row(
+            "training",
+            "training_wall_time_s",
+            performance.get("wall_time_s", ""),
+            "seconds",
+            status,
+            "Wall-clock time measured during train_sdae.",
+        ),
+        _performance_row(
+            "training",
+            "training_cpu_time_s",
+            performance.get("process_cpu_time_s", ""),
+            "CPU seconds",
+            status,
+            "Process CPU time measured during train_sdae.",
+        ),
+        _performance_row(
+            "training",
+            "training_cpu_usage_percent_all_cores",
+            performance.get("cpu_usage_percent_all_cores", ""),
+            "percent of logical CPU capacity",
+            status,
+            "Process CPU time divided by wall time and logical CPU count during train_sdae.",
+        ),
+        _performance_row(
+            "training",
+            "training_peak_ram_mb",
+            performance.get("peak_rss_mb", ""),
+            "MB",
+            status,
+            "Peak resident memory sampled during train_sdae.",
+        ),
+    ]
+
+
+def _inference_benchmark_rows(
+    model: torch.nn.Module,
+    model_config: Dict[str, object],
+    feature_names: List[str],
+    model_dir: Path,
+    dataset_dir: Path,
+) -> List[Dict[str, object]]:
+    windows = pd.read_parquet(dataset_dir / "windows.parquet")
+    if feature_names and list(windows.columns) != feature_names:
+        windows = windows[feature_names]
+    if windows.empty:
+        return [
+            _performance_row(
+                "inference",
+                "inference_benchmark_status",
+                "not_available_no_windows",
+                "status",
+                "not_available_no_windows",
+                "No windows were available for inference benchmarking.",
+            )
+        ]
+    scaler = StandardFeatureScaler.load(model_dir / "scaler.joblib")
+    benchmark_window_count = int(min(len(windows), 1024))
+    values = windows.iloc[:benchmark_window_count].to_numpy(dtype=np.float32)
+    minimum_repetitions = int(max(3, np.ceil(2048 / benchmark_window_count)))
+    maximum_repetitions = 1000
+    minimum_wall_s = 0.20
+    with torch.no_grad():
+        for _ in range(2):
+            _run_inference_once(model, scaler, values)
+        sampler = PerformanceSampler().start()
+        repetitions = 0
+        start_wall = time.perf_counter()
+        while repetitions < maximum_repetitions:
+            _run_inference_once(model, scaler, values)
+            repetitions += 1
+            if repetitions >= minimum_repetitions and (time.perf_counter() - start_wall) >= minimum_wall_s:
+                break
+        performance = sampler.stop()
+    total_windows = int(benchmark_window_count * repetitions)
+    wall_time_s = float(performance["wall_time_s"])
+    cpu_time_s = float(performance["process_cpu_time_s"])
+    throughput = total_windows / wall_time_s if wall_time_s > 0.0 else None
+    compute_estimates = sdae_compute_estimates(model_config)
+    forward_flops = float(compute_estimates["estimated_forward_linear_flops_per_window"])
+    return [
+        _performance_row(
+            "inference",
+            "inference_benchmark_window_count",
+            benchmark_window_count,
+            "windows",
+            "measured_offline_cpu_benchmark",
+            "Number of dataset windows used in each benchmark repetition.",
+        ),
+        _performance_row(
+            "inference",
+            "inference_benchmark_repetitions",
+            repetitions,
+            "repetitions",
+            "measured_offline_cpu_benchmark",
+            "Benchmark repeats used to reduce timer noise.",
+        ),
+        _performance_row(
+            "inference",
+            "inference_wall_time_ms_per_window",
+            wall_time_s * 1000.0 / total_windows if total_windows else "",
+            "ms per 100 ms window",
+            "measured_offline_cpu_benchmark",
+            "Wall-clock time for scaling, tensor conversion, SDAE forward pass, and reconstruction error.",
+        ),
+        _performance_row(
+            "inference",
+            "inference_cpu_time_ms_per_window",
+            cpu_time_s * 1000.0 / total_windows if total_windows else "",
+            "CPU ms per 100 ms window",
+            "measured_offline_cpu_benchmark",
+            "Process CPU time for scaling, tensor conversion, SDAE forward pass, and reconstruction error.",
+        ),
+        _performance_row(
+            "inference",
+            "inference_cpu_usage_percent_all_cores",
+            performance.get("cpu_usage_percent_all_cores", ""),
+            "percent of logical CPU capacity",
+            "measured_offline_cpu_benchmark",
+            "Process CPU time divided by wall time and logical CPU count during the inference benchmark.",
+        ),
+        _performance_row(
+            "inference",
+            "inference_peak_ram_mb",
+            performance.get("peak_rss_mb", ""),
+            "MB",
+            "measured_offline_cpu_benchmark",
+            "Peak resident memory sampled during the inference benchmark.",
+        ),
+        _performance_row(
+            "inference",
+            "inference_throughput_windows_per_second",
+            throughput,
+            "windows per second",
+            "measured_offline_cpu_benchmark",
+            "Total benchmarked windows divided by wall-clock seconds.",
+        ),
+        _performance_row(
+            "inference",
+            "estimated_forward_linear_flops_per_second",
+            forward_flops * throughput if throughput is not None else "",
+            "linear-layer FLOPs per second",
+            "estimated_from_flops_and_measured_throughput",
+            "Estimated forward linear FLOPs per window multiplied by measured benchmark throughput.",
+        ),
+        _performance_row(
+            "inference",
+            "logical_cpu_count",
+            performance.get("logical_cpu_count", ""),
+            "logical cores",
+            "measured_offline_cpu_benchmark",
+            "Logical CPU count reported by the operating system.",
+        ),
+    ]
+
+
+def _run_inference_once(
+    model: torch.nn.Module,
+    scaler: StandardFeatureScaler,
+    values: np.ndarray,
+) -> None:
+    scaled = scaler.transform(values)
+    batch = torch.from_numpy(scaled)
+    reconstruction, _latent = model(batch)
+    errors = torch.mean((reconstruction - batch) ** 2, dim=1)
+    float(errors.mean().item())
+
+
+def _performance_row(
+    category: str,
+    metric: str,
+    value: object,
+    unit: str,
+    status: str,
+    method: str,
+) -> Dict[str, object]:
+    return {
+        "category": category,
+        "metric": metric,
+        "value": value,
+        "unit": unit,
+        "status": status,
+        "method": method,
+    }
+
+
 def _correct_known_mask(frame: pd.DataFrame) -> pd.Series:
     if frame.empty:
         return pd.Series(dtype=bool)
@@ -323,18 +621,34 @@ def _summary(
     detection_rows: List[Dict[str, object]],
     isolation_rows: List[Dict[str, object]],
     cross_domain_rows: List[Dict[str, object]],
+    performance_rows: List[Dict[str, object]],
 ) -> str:
     false_positive_rate = _metric_value(detection_rows, "overall", "false_positive_rate")
     true_fault_detection_rate = _metric_value(detection_rows, "overall", "true_fault_detection_rate")
     isolation_rate = _metric_value(isolation_rows, "overall", "true_fault_isolation_rate")
     cross_available = [row for row in cross_domain_rows if row["status"] == "available"]
+    forward_flops = _performance_metric_value(performance_rows, "estimated_forward_linear_flops_per_window")
+    training_flops = _performance_metric_value(performance_rows, "estimated_training_linear_flops_total")
+    training_cpu = _performance_metric_value(performance_rows, "training_cpu_usage_percent_all_cores")
+    training_ram = _performance_metric_value(performance_rows, "training_peak_ram_mb")
+    inference_cpu = _performance_metric_value(performance_rows, "inference_cpu_usage_percent_all_cores")
+    inference_ram = _performance_metric_value(performance_rows, "inference_peak_ram_mb")
+    inference_latency = _performance_metric_value(performance_rows, "inference_wall_time_ms_per_window")
+    source_type = str(dataset_manifest.get("source_type", "unknown"))
+    evidence_note = (
+        "This evaluation uses public CWRU bearing data with a reduced vibration-only profile. "
+        "It is a software realism check, not final USV thesis evidence."
+        if source_type == "external_cwru"
+        else "This evaluation uses synthetic proof-of-concept data. "
+        "It is a software smoke/evidence run, not final thesis evidence."
+    )
     return "\n".join(
         [
             "# Proof-of-Concept Evaluation Summary",
             "",
             f"Created at: {datetime.now(timezone.utc).isoformat()}",
             "",
-            "This evaluation uses synthetic proof-of-concept data. It is a software smoke/evidence run, not final thesis evidence.",
+            evidence_note,
             "",
             "## Artifacts",
             "",
@@ -356,13 +670,28 @@ def _summary(
             f"- True fault isolation rate: {_format_metric(isolation_rate)}",
             f"- DBCV: {_format_metric(_metric_value(isolation_rows, 'overall', 'dbcv_score'))} ({_metric_value(isolation_rows, 'overall', 'dbcv_status')})",
             f"- Cross-domain baselines with known fault anomalies: {len(cross_available)} of 4",
+            f"- Estimated forward compute per 100 ms window: {_format_metric(forward_flops)} linear-layer FLOPs",
+            f"- Estimated training compute: {_format_metric(training_flops)} linear-layer FLOPs",
+            f"- Training CPU/RAM: {_format_metric(training_cpu)}% CPU, {_format_metric(training_ram)} MB peak RAM",
+            f"- Inference CPU/RAM: {_format_metric(inference_cpu)}% CPU, {_format_metric(inference_ram)} MB peak RAM",
+            f"- Inference latency: {_format_metric(inference_latency)} ms per 100 ms window",
             "",
             "## Acceptance Notes",
             "",
             "- SDAE anomaly decisions are computed from the saved reconstruction threshold.",
             "- Known/novel decisions use squared Mahalanobis distance against Ledoit-Wolf dictionary entries.",
             "- Cross-domain metrics are marked `not_available` when the dataset does not contain B1-B4 known fault anomaly windows.",
-            "- SWaP-C power/CPU/RAM measurements are not measured in this offline POC command.",
+            "- CPU and RAM metrics are measured from the current process during training and offline inference benchmark runs.",
+            "- FLOP counts are linear-layer estimates; activations, optimizer bookkeeping, data loading, and Python overhead are excluded.",
+            "- Power measurements are not measured in this offline POC command.",
+            "",
+            "## Report Files",
+            "",
+            "- `poc_detection_metrics.csv`: detection reliability metrics",
+            "- `poc_isolation_metrics.csv`: isolation metrics",
+            "- `poc_cross_domain_metrics.csv`: B1-B4 transfer rows",
+            "- `poc_performance_metrics.csv`: FLOP estimates plus CPU/RAM usage for training and inference",
+            "- `poc_window_decisions.csv`: per-window anomaly and dictionary decisions",
             "",
         ]
     )
@@ -386,6 +715,13 @@ def _metric_value(rows: List[Dict[str, object]], scope: str, key: str) -> object
     for row in rows:
         if row.get("scope") == scope:
             return row.get(key)
+    return None
+
+
+def _performance_metric_value(rows: List[Dict[str, object]], metric: str) -> object:
+    for row in rows:
+        if row.get("metric") == metric:
+            return row.get("value")
     return None
 
 

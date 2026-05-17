@@ -252,6 +252,8 @@ Recommended sequence:
 
 The adapter should convert external files into canonical raw trial folders with `source_type: external` and a source citation in `manifest.yaml`. If channels are missing relative to the 2109 profile, use a separate dataset config rather than filling fake channels into final-schema experiments.
 
+Implementation note, 2026-05-17: the runnable public-data path currently uses CWRU as `source_type: external_cwru`. It downloads selected Zenodo-hosted CWRU `.mat` files, writes canonical raw trial folders, and uses a separate 1200-dimensional vibration-only dataset config. Paderborn remains the preferred final public source because it includes motor current and vibration, but its official archives are large RAR files and are not the default smoke/public check.
+
 Acceptance criteria:
 
 - The same `make-dataset`, `train-sdae`, `build-dictionary`, and `evaluate` commands run on external data.

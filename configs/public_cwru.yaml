@@ -1,0 +1,85 @@
+attachment_id: public_cwru_objective_7
+source_type: external_cwru
+schema_version: 0.1.0
+source_url: https://zenodo.org/records/10986655
+source_notes: >
+  Public mirror of Case Western Reserve University Bearing Data Center 12 kHz
+  drive-end bearing data. This adapter uses a reduced vibration-only profile.
+cache_dir: data/external/cwru
+default_duration_s: 6.0
+sampling:
+  raw_sample_rate_hz: 12000
+channel_profile:
+  name: cwru_drive_end_vibration_12khz
+  expected_input_dim: 1200
+  vibration_channels:
+    - drive_end_vibration
+  current_channels: []
+  scalar_channels: []
+  scalar_features: []
+trials:
+  - trial_id: 2026-05-17_CWRU_normal_train_97
+    file_name: 97.mat
+    url: https://zenodo.org/records/10986655/files/97.mat?download=1
+    md5: ee410e7243aefcd8b7120876556464e7
+    mat_variable: X097_DE_time
+    start_sample: 0
+    duration_s: 6.0
+    baseline_id: 0
+    baseline_name: cwru_normal_0hp_1797rpm
+    fault_label: none
+    fault_induced: false
+    rpm: 1797
+    load_hp: 0
+  - trial_id: 2026-05-17_CWRU_normal_validation_97
+    file_name: 97.mat
+    url: https://zenodo.org/records/10986655/files/97.mat?download=1
+    md5: ee410e7243aefcd8b7120876556464e7
+    mat_variable: X097_DE_time
+    start_sample: 72000
+    duration_s: 6.0
+    baseline_id: 0
+    baseline_name: cwru_normal_0hp_1797rpm
+    fault_label: none
+    fault_induced: false
+    rpm: 1797
+    load_hp: 0
+  - trial_id: 2026-05-17_CWRU_inner_fault_105
+    file_name: 105.mat
+    url: https://zenodo.org/records/10986655/files/105.mat?download=1
+    md5: f14821b40412f33018279198da7f9cdc
+    mat_variable: X105_DE_time
+    start_sample: 0
+    duration_s: 6.0
+    baseline_id: 0
+    baseline_name: cwru_fault_0hp_1797rpm
+    fault_label: inner_race_fault_007
+    fault_induced: true
+    rpm: 1797
+    load_hp: 0
+  - trial_id: 2026-05-17_CWRU_ball_fault_118
+    file_name: 118.mat
+    url: https://zenodo.org/records/10986655/files/118.mat?download=1
+    md5: ff0f20588edc64140ae33888fcf1114a
+    mat_variable: X118_DE_time
+    start_sample: 0
+    duration_s: 6.0
+    baseline_id: 0
+    baseline_name: cwru_fault_0hp_1797rpm
+    fault_label: ball_fault_007
+    fault_induced: true
+    rpm: 1797
+    load_hp: 0
+  - trial_id: 2026-05-17_CWRU_outer_fault_130
+    file_name: 130.mat
+    url: https://zenodo.org/records/10986655/files/130.mat?download=1
+    md5: e45f73f65cc3de4482d28d758503f2c1
+    mat_variable: X130_DE_time
+    start_sample: 0
+    duration_s: 6.0
+    baseline_id: 0
+    baseline_name: cwru_fault_0hp_1797rpm
+    fault_label: outer_race_fault_007
+    fault_induced: true
+    rpm: 1797
+    load_hp: 0

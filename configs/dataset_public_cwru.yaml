@@ -1,0 +1,32 @@
+dataset_id: ds_public_cwru_objective_7
+source_type: external_cwru
+raw_trial_root: data/raw/public_cwru
+source_trials:
+  - 2026-05-17_CWRU_normal_train_97
+  - 2026-05-17_CWRU_normal_validation_97
+  - 2026-05-17_CWRU_inner_fault_105
+  - 2026-05-17_CWRU_ball_fault_118
+  - 2026-05-17_CWRU_outer_fault_130
+windowing:
+  window_ms: 100
+  stride_ms: 100
+preprocessing:
+  vibration_sample_rate_hz: 12000
+  current_sample_rate_hz: 12000
+  scalar_features: []
+  expected_input_dim: 1200
+scaling:
+  method: standard
+  fit_on: healthy_train_only
+  channel_profile: cwru_drive_end_vibration_12khz
+  reduced_profile_reason: CWRU adapter is vibration-only and is not padded to the 2109-D USV profile.
+split:
+  strategy: by_trial
+  train:
+    - 2026-05-17_CWRU_normal_train_97
+  validation:
+    - 2026-05-17_CWRU_normal_validation_97
+  test:
+    - 2026-05-17_CWRU_inner_fault_105
+    - 2026-05-17_CWRU_ball_fault_118
+    - 2026-05-17_CWRU_outer_fault_130

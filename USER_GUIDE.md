@@ -14,9 +14,10 @@ The current implementation supports:
 - Ledoit-Wolf/Mahalanobis fault dictionary generation
 - synthetic POC evaluation reports
 - raw-trial replay decision logs
+- public CWRU bearing dataset attachment as a reduced vibration-only profile
 - training artifacts and basic plots
 
-It does not yet support FedRep, DANN, external public datasets, or live Teensy/Raspberry Pi collection. Those are later milestones.
+It does not yet support FedRep, DANN, a full Paderborn current-plus-vibration adapter, or live Teensy/Raspberry Pi collection. Those remain later milestones.
 
 ## 1. Environment Setup
 
@@ -167,6 +168,17 @@ configs/baseline_sdae.yaml
 ```
 
 The smoke configs are intended for quick validation. The full configs are closer to the thesis plan but will take longer and create more data.
+
+Use the public CWRU configs when you want to run the implemented Objective 7 public-data check through the current Objective 2-5 pipeline:
+
+```text
+configs/public_cwru.yaml
+configs/dataset_public_cwru.yaml
+configs/baseline_sdae_public_cwru.yaml
+configs/hdbscan_public_cwru.yaml
+```
+
+This is a reduced vibration-only public bearing dataset path. It is not padded to the 2109-dimensional USV schema.
 
 ## 3. Configure Synthetic Trials
 
@@ -647,6 +659,7 @@ This writes:
 poc_detection_metrics.csv
 poc_isolation_metrics.csv
 poc_cross_domain_metrics.csv
+poc_performance_metrics.csv
 poc_window_decisions.csv
 poc_summary.md
 ```
@@ -660,7 +673,27 @@ Current metric behavior:
 - DBCV is calculated when the dictionary clustering artifact contains at least two non-noise clusters; the smoke dictionary has one cluster, so DBCV is marked `not_available_single_cluster`
 - B1-B4 cross-domain rows are written and marked `not_available` when the dataset has no shifted-baseline known fault anomaly windows
 - model artifact size is recorded from the model artifact directory and `model.pt`
-- power, CPU, and RAM are explicitly not measured in this offline POC command
+- CPU and RAM are measured for training and offline inference benchmarks using process CPU time and resident memory
+- FLOP counts are estimated from the SDAE Linear layer dimensions
+- power is explicitly not measured in this offline POC command
+
+`poc_performance_metrics.csv` contains:
+
+- `model_parameter_count`
+- `model_nonzero_parameter_count`
+- `estimated_parameter_memory_fp32_mb`
+- `estimated_forward_linear_macs_per_window`
+- `estimated_forward_linear_flops_per_window`
+- `estimated_training_linear_flops_per_window`
+- `estimated_training_linear_flops_total`
+- `training_cpu_usage_percent_all_cores`
+- `training_peak_ram_mb`
+- `inference_cpu_usage_percent_all_cores`
+- `inference_peak_ram_mb`
+- `inference_wall_time_ms_per_window`
+- `inference_throughput_windows_per_second`
+
+The FLOP estimates are linear-layer estimates only. Forward FLOPs count multiply-adds as 2 FLOPs plus bias additions. Training FLOPs are approximated as 3x forward FLOPs per training window. Activations, optimizer bookkeeping, data loading, HDBSCAN, Pandas/PyArrow work, and Python overhead are not included in the static FLOP estimate, but CPU/RAM measurements do include real process overhead during the measured blocks.
 
 The smoke Objective 5 run currently reports:
 
@@ -729,5 +762,44 @@ It verifies:
 - detection metrics include false positive and true fault detection columns
 - isolation metrics include true fault isolation and DBCV status columns
 - cross-domain metrics include B1-B4 rows
+- performance metrics include FLOP estimates plus training/inference CPU and RAM rows
 - replay writes the required decision-log columns
 - replay produces at least one anomaly and at least one known dictionary decision
+
+## 20. Objective 7 Public CWRU Check
+
+Objective 7 currently uses the Case Western Reserve University bearing data as the runnable public-data path. Paderborn remains the closer dataset for the final thesis sensor plan because it includes motor current and vibration, but the official Paderborn archives are large RAR files. The CWRU path is therefore used as the lightweight public realism check.
+
+Run the public check:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\run_objective_7_public_checks.ps1
+```
+
+This downloads the selected public `.mat` files into:
+
+```text
+data/external/cwru/
+```
+
+Then it writes:
+
+```text
+data/raw/public_cwru/
+data/processed/datasets/ds_public_cwru_objective_7/
+artifacts/models/run_public_cwru_sdae_objective_7/
+artifacts/dictionaries/dict_public_cwru_objective_7/
+runs/reports/objective_7_public_cwru/
+```
+
+The CWRU profile uses one 12 kHz drive-end vibration channel with 100 ms windows:
+
+```text
+1 vibration channel x 1200 samples = 1200 input features
+```
+
+No current or scalar channels are fabricated. The raw trial manifests and dataset config record the reduced profile explicitly.
+
+The current public CWRU run produced 300 windows, 8 dictionary entries, a 1.67 percent healthy false positive rate, 100 percent fault-window detection, 83.33 percent known-fault isolation, and 100 percent novel decision rate for the withheld outer-race fault. Treat this as development evidence only; it is not a substitute for the planned USV hardware data.
+
+`tests/test_objective_7.py` keeps CI/offline checks deterministic by creating a tiny local MATLAB fixture, attaching it through the same CWRU adapter, and running dataset generation, SDAE training, dictionary generation, and evaluation against the reduced public-profile contract.

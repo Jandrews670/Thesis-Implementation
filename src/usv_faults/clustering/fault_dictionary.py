@@ -389,6 +389,14 @@ def _clustering_details(config: Dict[str, object], cluster_result: ClusterResult
     details["cluster_match_min_member_fraction"] = float(
         config.get("cluster_match_min_member_fraction", 0.50)
     )
+    details["event_window_size"] = int(config.get("event_window_size", details["rolling_window_size"]))
+    details["event_min_anomaly_votes"] = int(config.get("event_min_anomaly_votes", 3))
+    details["event_min_anomaly_fraction"] = float(config.get("event_min_anomaly_fraction", 0.30))
+    details["event_min_known_votes"] = int(config.get("event_min_known_votes", 3))
+    details["event_min_known_fraction"] = float(config.get("event_min_known_fraction", 0.15))
+    details["event_min_known_purity"] = float(config.get("event_min_known_purity", 0.50))
+    details["event_min_novel_votes"] = int(config.get("event_min_novel_votes", 3))
+    details["event_min_novel_fraction"] = float(config.get("event_min_novel_fraction", 0.15))
     return details
 
 

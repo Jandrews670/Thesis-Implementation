@@ -1,0 +1,64 @@
+attachment_id: public_femto_template
+source_type: external_femto
+dataset_name: NASA FEMTO PRONOSTIA Bearing Data Set
+schema_version: 0.1.0
+source_url: https://phm-datasets.s3.amazonaws.com/NASA/10.+FEMTO+Bearing.zip
+source_notes: >
+  NASA PCoE mirror of the FEMTO-ST PRONOSTIA bearing data. Download/extract under
+  data/external/femto and verify the acceleration column indices for the extracted CSV files.
+cache_dir: data/external/femto
+format: csv
+delimiter: auto
+has_header: false
+default_duration_s: null
+sampling:
+  raw_sample_rate_hz: 25600
+channel_profile:
+  name: femto_two_axis_vibration_25k6
+  expected_input_dim: 5120
+  vibration_channels:
+    - horizontal_acceleration
+    - vertical_acceleration
+  current_channels: []
+  scalar_channels: []
+  scalar_features: []
+columns:
+  horizontal_acceleration: 4
+  vertical_acceleration: 5
+trials:
+  - trial_id: femto_bearing1_1_train_early
+    baseline_id: 0
+    baseline_name: femto_condition_1_early_life
+    fault_label: none
+    fault_induced: false
+    record_ranges:
+      - path_template: data/external/femto/Learning_set/Bearing1_1/acc_{index:05d}.csv
+        start: 1
+        end: 60
+  - trial_id: femto_bearing1_2_validation_early
+    baseline_id: 0
+    baseline_name: femto_condition_1_early_life
+    fault_label: none
+    fault_induced: false
+    record_ranges:
+      - path_template: data/external/femto/Learning_set/Bearing1_2/acc_{index:05d}.csv
+        start: 1
+        end: 60
+  - trial_id: femto_bearing1_1_degraded_late
+    baseline_id: 0
+    baseline_name: femto_condition_1_late_life
+    fault_label: bearing_degradation
+    fault_induced: true
+    record_ranges:
+      - path_template: data/external/femto/Learning_set/Bearing1_1/acc_{index:05d}.csv
+        start: 2700
+        end: 2759
+  - trial_id: femto_bearing1_2_degraded_late
+    baseline_id: 0
+    baseline_name: femto_condition_1_late_life
+    fault_label: bearing_degradation
+    fault_induced: true
+    record_ranges:
+      - path_template: data/external/femto/Learning_set/Bearing1_2/acc_{index:05d}.csv
+        start: 800
+        end: 859

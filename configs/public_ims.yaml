@@ -1,0 +1,86 @@
+attachment_id: public_ims_template
+source_type: external_ims
+dataset_name: NASA IMS Bearing Data Set
+schema_version: 0.1.0
+source_url: https://phm-datasets.s3.amazonaws.com/NASA/4.+Bearings.zip
+source_notes: >
+  NASA PCoE IMS bearing data. Download/extract the archive under data/external/ims
+  and adjust record paths if your extracted folder names differ.
+cache_dir: data/external/ims
+format: delimited
+delimiter: auto
+has_header: false
+default_duration_s: null
+sampling:
+  raw_sample_rate_hz: 20000
+channel_profile:
+  name: ims_single_vibration_20khz
+  expected_input_dim: 2000
+  vibration_channels:
+    - bearing_vibration
+  current_channels: []
+  scalar_channels: []
+  scalar_features: []
+columns:
+  bearing_vibration: 0
+trials:
+  - trial_id: ims_normal_train
+    baseline_id: 0
+    baseline_name: ims_nominal
+    fault_label: none
+    fault_induced: false
+    records:
+      - path: data/external/ims/1st_test/2003.10.22.12.06.24
+        columns:
+          bearing_vibration: 4
+      - path: data/external/ims/1st_test/2003.10.22.12.09.13
+        columns:
+          bearing_vibration: 6
+  - trial_id: ims_normal_validation
+    baseline_id: 0
+    baseline_name: ims_nominal
+    fault_label: none
+    fault_induced: false
+    records:
+      - path: data/external/ims/1st_test/2003.10.22.12.14.13
+        columns:
+          bearing_vibration: 4
+      - path: data/external/ims/1st_test/2003.10.22.12.19.13
+        columns:
+          bearing_vibration: 6
+  - trial_id: ims_bearing3_inner_fault
+    baseline_id: 0
+    baseline_name: ims_run_to_failure
+    fault_label: bearing_inner_race_fault
+    fault_induced: true
+    records:
+      - path: data/external/ims/1st_test/2003.11.25.23.13.21
+        columns:
+          bearing_vibration: 4
+      - path: data/external/ims/1st_test/2003.11.25.23.19.56
+        columns:
+          bearing_vibration: 4
+      - path: data/external/ims/1st_test/2003.11.25.23.29.56
+        columns:
+          bearing_vibration: 4
+      - path: data/external/ims/1st_test/2003.11.25.23.39.56
+        columns:
+          bearing_vibration: 4
+  - trial_id: ims_bearing4_roller_fault
+    baseline_id: 0
+    baseline_name: ims_run_to_failure
+    fault_label: bearing_roller_fault
+    fault_induced: true
+    records:
+      - path: data/external/ims/1st_test/2003.11.25.23.13.21
+        columns:
+          bearing_vibration: 6
+      - path: data/external/ims/1st_test/2003.11.25.23.19.56
+        columns:
+          bearing_vibration: 6
+      - path: data/external/ims/1st_test/2003.11.25.23.29.56
+        columns:
+          bearing_vibration: 6
+      - path: data/external/ims/1st_test/2003.11.25.23.39.56
+        columns:
+          bearing_vibration: 6

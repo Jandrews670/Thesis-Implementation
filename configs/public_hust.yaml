@@ -1,0 +1,57 @@
+attachment_id: public_hust_template
+source_type: external_hust
+dataset_name: HUST Bearing Data Set
+schema_version: 0.1.0
+source_url: https://arxiv.org/abs/2302.12533
+source_notes: >
+  HUST bearing data has multiple bearing types, working conditions, and defect
+  combinations. Download the dataset from the authors' published location and update
+  paths/columns to match the extracted files.
+cache_dir: data/external/hust
+format: csv
+delimiter: auto
+has_header: true
+default_duration_s: null
+sampling:
+  raw_sample_rate_hz: 51200
+channel_profile:
+  name: hust_single_vibration_51k2
+  expected_input_dim: 5120
+  vibration_channels:
+    - vibration
+  current_channels: []
+  scalar_channels: []
+  scalar_features: []
+columns:
+  vibration: vibration
+trials:
+  - trial_id: hust_normal_train
+    baseline_id: 0
+    baseline_name: hust_condition_1
+    fault_label: none
+    fault_induced: false
+    path: data/external/hust/normal_condition_1.csv
+  - trial_id: hust_normal_validation
+    baseline_id: 0
+    baseline_name: hust_condition_1
+    fault_label: none
+    fault_induced: false
+    path: data/external/hust/normal_condition_1_validation.csv
+  - trial_id: hust_inner_crack
+    baseline_id: 0
+    baseline_name: hust_condition_1
+    fault_label: inner_crack
+    fault_induced: true
+    path: data/external/hust/inner_crack_condition_1.csv
+  - trial_id: hust_outer_crack
+    baseline_id: 0
+    baseline_name: hust_condition_1
+    fault_label: outer_crack
+    fault_induced: true
+    path: data/external/hust/outer_crack_condition_1.csv
+  - trial_id: hust_ball_crack
+    baseline_id: 0
+    baseline_name: hust_condition_1
+    fault_label: ball_crack
+    fault_induced: true
+    path: data/external/hust/ball_crack_condition_1.csv

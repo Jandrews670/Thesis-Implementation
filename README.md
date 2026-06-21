@@ -168,13 +168,17 @@ It writes:
 ```text
 poc_detection_metrics.csv
 poc_isolation_metrics.csv
+poc_event_metrics.csv
 poc_cross_domain_metrics.csv
 poc_performance_metrics.csv
 poc_window_decisions.csv
+poc_event_decisions.csv
 poc_summary.md
 ```
 
 `poc_performance_metrics.csv` records Objective 5 performance indicators for the trained SDAE artifact. It includes parameter count, estimated forward FLOPs per 100 ms window, estimated training FLOPs, measured training CPU/RAM from `train-sdae`, and measured offline inference CPU/RAM/latency from `evaluate`.
+
+`poc_window_decisions.csv` remains the per-window SDAE/HDBSCAN/Mahalanobis decision log. `poc_event_decisions.csv` adds a rolling event layer that votes over recent window decisions, and `poc_event_metrics.csv` reports event-level false positive, detection, known-fault isolation, withheld-novel, and latency metrics.
 
 Objective 5 also adds replay runtime logging from a raw trial folder:
 
@@ -182,7 +186,7 @@ Objective 5 also adds replay runtime logging from a raw trial folder:
 .\.venv\Scripts\python.exe -m usv_faults.cli run --source replay --trial data/raw/trials_training_smoke/2026-05-14_POC_B0_fault_bearing_T001 --model artifacts/models/run_poc_sdae_smoke_objective_5 --dictionary artifacts/dictionaries/dict_poc_b0_smoke_objective_5 --out runs/logs/objective_5_smoke
 ```
 
-Dictionary decisions now use rolling cluster matching. The runtime path keeps the last 30 latent windows, clusters the anomalous latents inside that temporal buffer with HDBSCAN, then compares the current runtime cluster centroid and member inlier fraction against stored dictionary clusters. Replay logs contain reconstruction error, threshold state, runtime cluster label, dictionary decision, matched fault ID/label, cluster support count, member inlier fraction, and squared Mahalanobis centroid distance.
+Dictionary decisions now use rolling cluster matching. The runtime path keeps a rolling latent window, clusters the anomalous latents inside that temporal buffer with HDBSCAN, then compares the current runtime cluster centroid and member inlier fraction against stored dictionary clusters. Event reports then smooth these per-window decisions with a separate rolling vote. Replay logs contain reconstruction error, threshold state, runtime cluster label, dictionary decision, matched fault ID/label, cluster support count, member inlier fraction, and squared Mahalanobis centroid distance.
 
 Run the objective 7 public-data check:
 
@@ -201,6 +205,33 @@ runs/reports/objective_7_public_cwru
 ```
 
 The CWRU config uses one 12 kHz drive-end vibration channel, 100 ms windows, and `expected_input_dim: 1200`. It does not fabricate missing current channels to match the 2109-D USV schema. The generated public report is labelled as a public CWRU realism check, not final thesis evidence.
+
+Additional public bearing adapters are available for local dataset experiments:
+
+```text
+IMS/NASA Bearings: configs/public_ims.yaml, dataset_public_ims.yaml
+FEMTO/PRONOSTIA: configs/public_femto.yaml, dataset_public_femto.yaml
+HUST Bearings: configs/public_hust.yaml, dataset_public_hust.yaml
+Paderborn Bearings: configs/public_paderborn.yaml, dataset_public_paderborn.yaml
+```
+
+These adapters convert downloaded/extracted public files into the same canonical raw-trial folder contract as CWRU and synthetic data. They are template configs because the public archives can be large and their extracted folder names vary. Update the `path`, `records`, `columns`, or `mat_variables` fields after downloading the data locally.
+
+Run the adapter fixture checks:
+
+```powershell
+.\scripts\run_public_bearing_adapter_checks.ps1
+```
+
+Example IMS command sequence after placing the files under `data/external/ims`:
+
+```powershell
+.\.venv\Scripts\python.exe -m usv_faults.cli attach-data --source ims --config configs/public_ims.yaml --out data/raw/public_ims
+.\.venv\Scripts\python.exe -m usv_faults.cli make-dataset --config configs/dataset_public_ims.yaml --out data/processed/datasets/ds_public_ims
+.\.venv\Scripts\python.exe -m usv_faults.cli train-sdae --dataset data/processed/datasets/ds_public_ims --config configs/baseline_sdae_public_ims.yaml --out artifacts/models/run_public_ims_sdae
+.\.venv\Scripts\python.exe -m usv_faults.cli build-dictionary --model artifacts/models/run_public_ims_sdae --dataset data/processed/datasets/ds_public_ims --config configs/hdbscan_public_ims.yaml --out artifacts/dictionaries/dict_public_ims
+.\.venv\Scripts\python.exe -m usv_faults.cli evaluate --model artifacts/models/run_public_ims_sdae --dictionary artifacts/dictionaries/dict_public_ims --dataset data/processed/datasets/ds_public_ims --out runs/reports/public_ims
+```
 
 The first runnable objective is synthetic data attachment and quality checking:
 

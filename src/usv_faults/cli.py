@@ -7,6 +7,12 @@ from typing import List, Optional
 
 from usv_faults.clustering.fault_dictionary import build_fault_dictionary
 from usv_faults.data_sources.cwru import CWRUBearingSource
+from usv_faults.data_sources.public_bearing import (
+    FEMTOBearingSource,
+    HUSTBearingSource,
+    IMSBearingSource,
+    PaderbornBearingSource,
+)
 from usv_faults.data_sources.synthetic_usv import SyntheticUSVSource
 from usv_faults.evaluation.reports import evaluate_pipeline
 from usv_faults.evaluation.trial_runner import run_replay_trial
@@ -26,8 +32,19 @@ def _cmd_attach_data(args: argparse.Namespace) -> int:
         created = SyntheticUSVSource.from_config_path(args.config).attach(args.out)
     elif args.source in {"cwru", "external_cwru"}:
         created = CWRUBearingSource.from_config_path(args.config).attach(args.out)
+    elif args.source in {"ims", "nasa_ims", "external_ims"}:
+        created = IMSBearingSource.from_config_path(args.config).attach(args.out)
+    elif args.source in {"femto", "pronostia", "external_femto"}:
+        created = FEMTOBearingSource.from_config_path(args.config).attach(args.out)
+    elif args.source in {"hust", "external_hust"}:
+        created = HUSTBearingSource.from_config_path(args.config).attach(args.out)
+    elif args.source in {"paderborn", "pu", "external_paderborn"}:
+        created = PaderbornBearingSource.from_config_path(args.config).attach(args.out)
     else:
-        print("Supported sources are: synthetic, cwru.", file=sys.stderr)
+        print(
+            "Supported sources are: synthetic, cwru, ims, femto, hust, paderborn.",
+            file=sys.stderr,
+        )
         return 2
     print(f"Attached {len(created)} {args.source} trials under {args.out}")
     return 0

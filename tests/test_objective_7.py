@@ -67,16 +67,20 @@ class ObjectiveSevenTests(unittest.TestCase):
             self.assertEqual(evaluation["window_count"], 80)
             self.assertTrue((reports_dir / "poc_detection_metrics.csv").exists())
             self.assertTrue((reports_dir / "poc_isolation_metrics.csv").exists())
+            self.assertTrue((reports_dir / "poc_event_metrics.csv").exists())
             self.assertTrue((reports_dir / "poc_performance_metrics.csv").exists())
 
             dataset_manifest = read_yaml(dataset_dir / "dataset_manifest.yaml")
             self.assertEqual(dataset_manifest["source_type"], "external_cwru")
             self.assertEqual(dataset_manifest["preprocessing"]["expected_input_dim"], 100)
             decisions = pd.read_csv(reports_dir / "poc_window_decisions.csv")
+            event_decisions = pd.read_csv(reports_dir / "poc_event_decisions.csv")
             fault_decisions = decisions[decisions["is_fault"].astype(bool)]
             self.assertGreater(int(fault_decisions["is_anomaly"].sum()), 0)
             self.assertIn("runtime_cluster_label", decisions.columns)
             self.assertIn("cluster_member_inlier_fraction", decisions.columns)
+            self.assertIn("event_decision", event_decisions.columns)
+            self.assertIn("event_confidence", event_decisions.columns)
 
 
 def _write_fixture_mat(path: Path, variable: str, sample_rate_hz: int, kind: str, seed: int) -> None:
@@ -220,6 +224,14 @@ def _dictionary_config() -> dict:
         "cluster_selection_method": "eom",
         "allow_single_cluster": True,
         "mahalanobis_confidence": 0.99,
+        "event_window_size": 10,
+        "event_min_anomaly_votes": 2,
+        "event_min_anomaly_fraction": 0.30,
+        "event_min_known_votes": 2,
+        "event_min_known_fraction": 0.10,
+        "event_min_known_purity": 0.50,
+        "event_min_novel_votes": 2,
+        "event_min_novel_fraction": 0.10,
         "dictionary_baseline_id": 0,
         "known_fault_labels": ["inner_race_fault_007", "ball_fault_007"],
         "withheld_fault_labels": [],

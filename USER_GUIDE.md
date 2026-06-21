@@ -15,9 +15,10 @@ The current implementation supports:
 - synthetic POC evaluation reports
 - raw-trial replay decision logs
 - public CWRU bearing dataset attachment as a reduced vibration-only profile
+- public IMS, FEMTO/PRONOSTIA, HUST, and Paderborn bearing dataset attachment templates
 - training artifacts and basic plots
 
-It does not yet support FedRep, DANN, a full Paderborn current-plus-vibration adapter, or live Teensy/Raspberry Pi collection. Those remain later milestones.
+It does not yet support production FedRep/DANN validation or live Teensy/Raspberry Pi collection. Those remain later milestones and require real domain/hardware data.
 
 ## 1. Environment Setup
 
@@ -179,6 +180,32 @@ configs/hdbscan_public_cwru.yaml
 ```
 
 This is a reduced vibration-only public bearing dataset path. It is not padded to the 2109-dimensional USV schema.
+
+Use these additional public dataset config sets after downloading and extracting the source files locally:
+
+```text
+configs/public_ims.yaml
+configs/dataset_public_ims.yaml
+configs/baseline_sdae_public_ims.yaml
+configs/hdbscan_public_ims.yaml
+
+configs/public_femto.yaml
+configs/dataset_public_femto.yaml
+configs/baseline_sdae_public_femto.yaml
+configs/hdbscan_public_femto.yaml
+
+configs/public_hust.yaml
+configs/dataset_public_hust.yaml
+configs/baseline_sdae_public_hust.yaml
+configs/hdbscan_public_hust.yaml
+
+configs/public_paderborn.yaml
+configs/dataset_public_paderborn.yaml
+configs/baseline_sdae_public_paderborn.yaml
+configs/hdbscan_public_paderborn.yaml
+```
+
+These are local-file adapters, not guaranteed one-command downloaders. Public archives often unpack with different folder names, so check the `path`, `records`, `columns`, and `mat_variables` fields before running them.
 
 ## 3. Configure Synthetic Trials
 
@@ -532,11 +559,11 @@ To add another fault trial, add it under a fault trial set, set `fault_start_s` 
 
 ## 14. Current Limitations
 
-- Only synthetic data is supported.
+- Public CWRU has the automated Objective 7 check. IMS, FEMTO, HUST, and Paderborn have tested local-file adapters and config templates, but they still require manual dataset download/extraction and path verification.
 - Latent vectors are currently exported by `build-dictionary`, not by `train-sdae`.
 - HDBSCAN, Ledoit-Wolf covariance, and chi-square thresholds require the package dependencies listed in `pyproject.toml`.
 - There is no live hardware ingestion yet; `run` currently supports replay only.
-- SWaP-C power, CPU, and RAM measurements are not measured by the offline smoke commands.
+- CPU and RAM are measured for training/evaluation reports, but power and thermal behaviour still require target Raspberry Pi hardware measurements.
 - The current smoke config is for fast validation, not final thesis evidence.
 
 For final thesis runs, use longer trials and the full model config before interpreting metrics scientifically.
@@ -662,6 +689,8 @@ This writes:
 ```text
 poc_detection_metrics.csv
 poc_isolation_metrics.csv
+poc_event_metrics.csv
+poc_event_decisions.csv
 poc_cross_domain_metrics.csv
 poc_performance_metrics.csv
 poc_window_decisions.csv
@@ -673,6 +702,7 @@ Current metric behavior:
 - false positive rate is measured on healthy windows
 - true fault detection rate is measured on fault windows flagged by the SDAE threshold
 - true fault isolation rate is measured on known fault anomaly windows whose rolling runtime cluster matches the correct dictionary label
+- event-level false positive, detection, known-fault isolation, withheld-novel, and latency metrics are measured from a rolling vote over recent per-window decisions
 - fault isolation latency is measured from the first labelled fault window to the first correct known/novel decision
 - DBCV is calculated when the dictionary clustering artifact contains at least two non-noise clusters; the smoke dictionary has one cluster, so DBCV is marked `not_available_single_cluster`
 - B1-B4 cross-domain rows are written and marked `not_available` when the dataset has no shifted-baseline known fault anomaly windows
@@ -698,6 +728,8 @@ Current metric behavior:
 - `inference_throughput_windows_per_second`
 
 The FLOP estimates are linear-layer estimates only. Forward FLOPs count multiply-adds as 2 FLOPs plus bias additions. Training FLOPs are approximated as 3x forward FLOPs per training window. Activations, optimizer bookkeeping, data loading, HDBSCAN, Pandas/PyArrow work, and Python overhead are not included in the static FLOP estimate, but CPU/RAM measurements do include real process overhead during the measured blocks.
+
+The event layer does not replace `poc_window_decisions.csv`. It writes `poc_event_decisions.csv` by counting recent anomaly, known-label, and novel votes over a rolling event window. Sustained anomalies with enough matching known votes become an event-level `known` fault; sustained anomalies without a known majority become event-level `novel`.
 
 The smoke Objective 5 run currently reports:
 
@@ -811,3 +843,32 @@ No current or scalar channels are fabricated. The raw trial manifests and datase
 The current public CWRU run produced 300 windows, 8 dictionary entries, a 1.67 percent healthy false positive rate, 100 percent fault-window detection, 83.33 percent known-fault isolation, and 100 percent novel decision rate for the withheld outer-race fault. Treat this as development evidence only; it is not a substitute for the planned USV hardware data.
 
 `tests/test_objective_7.py` keeps CI/offline checks deterministic by creating a tiny local MATLAB fixture, attaching it through the same CWRU adapter, and running dataset generation, SDAE training, dictionary generation, and evaluation against the reduced public-profile contract.
+
+## 21. Additional Public Bearing Adapters
+
+The implementation now includes config-driven local-file adapters for four more public bearing datasets:
+
+```text
+IMS/NASA Bearings: --source ims
+FEMTO/PRONOSTIA: --source femto
+HUST Bearings: --source hust
+Paderborn Bearings: --source paderborn
+```
+
+Run their fixture checks without downloading the full datasets:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\run_public_bearing_adapter_checks.ps1
+```
+
+After downloading and extracting a dataset, adjust the relevant `configs/public_*.yaml` paths and run the usual pipeline. Example for Paderborn:
+
+```powershell
+.\.venv\Scripts\python.exe -m usv_faults.cli attach-data --source paderborn --config configs/public_paderborn.yaml --out data/raw/public_paderborn
+.\.venv\Scripts\python.exe -m usv_faults.cli make-dataset --config configs/dataset_public_paderborn.yaml --out data/processed/datasets/ds_public_paderborn
+.\.venv\Scripts\python.exe -m usv_faults.cli train-sdae --dataset data/processed/datasets/ds_public_paderborn --config configs/baseline_sdae_public_paderborn.yaml --out artifacts/models/run_public_paderborn_sdae
+.\.venv\Scripts\python.exe -m usv_faults.cli build-dictionary --model artifacts/models/run_public_paderborn_sdae --dataset data/processed/datasets/ds_public_paderborn --config configs/hdbscan_public_paderborn.yaml --out artifacts/dictionaries/dict_public_paderborn
+.\.venv\Scripts\python.exe -m usv_faults.cli evaluate --model artifacts/models/run_public_paderborn_sdae --dictionary artifacts/dictionaries/dict_public_paderborn --dataset data/processed/datasets/ds_public_paderborn --out runs/reports/public_paderborn
+```
+
+The Paderborn template maps one vibration channel and one motor-current channel, giving a 12,800-D 100 ms input at 64 kHz. IMS and HUST use one vibration channel. FEMTO uses horizontal and vertical acceleration channels. None of these adapters pads missing channels to the synthetic 2109-D USV profile.

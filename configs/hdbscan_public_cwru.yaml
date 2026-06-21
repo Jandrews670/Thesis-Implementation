@@ -1,4 +1,4 @@
-rolling_window_size: 30
+rolling_window_size: 60
 min_cluster_size: 3
 min_samples: 1
 metric: euclidean
@@ -7,6 +7,14 @@ allow_single_cluster: false
 mahalanobis_confidence: 0.99
 min_runtime_cluster_size: 3
 cluster_match_min_member_fraction: 0
+event_window_size: 30
+event_min_anomaly_votes: 3
+event_min_anomaly_fraction: 0.30
+event_min_known_votes: 3
+event_min_known_fraction: 0.15
+event_min_known_purity: 0.50
+event_min_novel_votes: 3
+event_min_novel_fraction: 0.15
 dictionary_baseline_id: 0
 known_fault_labels:
   - inner_race_fault_007

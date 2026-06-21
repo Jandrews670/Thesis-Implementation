@@ -1,0 +1,18 @@
+model:
+  input_dim: 2000
+  hidden_dims: [256, 128]
+  latent_dim: 16
+  hidden_activation: relu
+  output_activation: sigmoid
+  masking_noise: 0.10
+  l1_lambda: 0.0001
+training:
+  optimizer: adam
+  learning_rate: 0.001
+  batch_size: 32
+  epochs: 8
+  early_stopping: false
+  seed: 20260621
+threshold:
+  method: validation_percentile
+  target_false_positive_rate: 0.02

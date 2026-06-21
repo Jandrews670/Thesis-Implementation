@@ -1,0 +1,29 @@
+dataset_id: ds_public_ims
+source_type: external_ims
+raw_trial_root: data/raw/public_ims
+source_trials:
+  - ims_normal_train
+  - ims_normal_validation
+  - ims_bearing3_inner_fault
+  - ims_bearing4_roller_fault
+windowing:
+  window_ms: 100
+  stride_ms: 100
+preprocessing:
+  vibration_sample_rate_hz: 20000
+  current_sample_rate_hz: 20000
+  scalar_features: []
+  expected_input_dim: 2000
+scaling:
+  method: standard
+  fit_on: healthy_train_only
+  channel_profile: ims_single_vibration_20khz
+split:
+  strategy: by_trial
+  train:
+    - ims_normal_train
+  validation:
+    - ims_normal_validation
+  test:
+    - ims_bearing3_inner_fault
+    - ims_bearing4_roller_fault

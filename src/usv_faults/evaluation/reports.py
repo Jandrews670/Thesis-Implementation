@@ -32,15 +32,19 @@ def evaluate_pipeline(model_dir: Path, dictionary_dir: Path, dataset_dir: Path, 
 
     decisions = _decisions_for_frame(frame, extraction.latent_columns, dictionary)
     decisions.to_csv(out_dir / "poc_window_decisions.csv", index=False)
+    event_decisions = _event_decisions_for_frame(decisions, dictionary)
+    event_decisions.to_csv(out_dir / "poc_event_decisions.csv", index=False)
 
     dbcv_score, dbcv_status = _dbcv_from_cluster_artifact(dictionary_dir)
     detection_rows = _detection_metrics(frame, model_dir)
     isolation_rows = _isolation_metrics(decisions, dictionary, dbcv_score, dbcv_status)
+    event_rows = _event_metrics(event_decisions, dictionary)
     cross_domain_rows = _cross_domain_metrics(decisions, extraction.latent_columns, dictionary)
     performance_rows = _performance_metrics(model_dir, dataset_dir)
 
     _write_csv(out_dir / "poc_detection_metrics.csv", detection_rows)
     _write_csv(out_dir / "poc_isolation_metrics.csv", isolation_rows)
+    _write_csv(out_dir / "poc_event_metrics.csv", event_rows)
     _write_csv(out_dir / "poc_cross_domain_metrics.csv", cross_domain_rows)
     _write_csv(out_dir / "poc_performance_metrics.csv", performance_rows)
 
@@ -54,6 +58,7 @@ def evaluate_pipeline(model_dir: Path, dictionary_dir: Path, dataset_dir: Path, 
         dictionary_manifest=dictionary_manifest,
         detection_rows=detection_rows,
         isolation_rows=isolation_rows,
+        event_rows=event_rows,
         cross_domain_rows=cross_domain_rows,
         performance_rows=performance_rows,
     )
@@ -66,6 +71,7 @@ def evaluate_pipeline(model_dir: Path, dictionary_dir: Path, dataset_dir: Path, 
         "false_positive_rate": _metric_value(detection_rows, "overall", "false_positive_rate"),
         "true_fault_detection_rate": _metric_value(detection_rows, "overall", "true_fault_detection_rate"),
         "true_fault_isolation_rate": _metric_value(isolation_rows, "overall", "true_fault_isolation_rate"),
+        "event_true_fault_isolation_rate": _metric_value(event_rows, "overall", "event_true_fault_isolation_rate"),
         "dictionary_id": dictionary.get("dictionary_id", dictionary_dir.name),
         "performance_metric_count": len(performance_rows),
     }
@@ -277,6 +283,234 @@ def _isolation_metrics(
                 "fault_isolation_latency_s": _latency_for_trial(decisions, str(trial_id), str(fault_label), known_fault_labels),
                 "dbcv_score": "",
                 "dbcv_status": "",
+            }
+        )
+    return rows
+
+
+def _event_decisions_for_frame(decisions: pd.DataFrame, dictionary: Dict[str, object]) -> pd.DataFrame:
+    config = _event_config(dictionary)
+    event_window_size = int(config["event_window_size"])
+    rows: List[Dict[str, object]] = []
+
+    for _trial_id, trial_frame in decisions.reset_index(drop=True).groupby("trial_id", sort=False):
+        history: List[Dict[str, object]] = []
+        for _index, row in trial_frame.iterrows():
+            row_dict = row.to_dict()
+            history.append(row_dict)
+            if len(history) > event_window_size:
+                history = history[-event_window_size:]
+            event = _event_vote(history, config)
+            rows.append(
+                {
+                    "row_index": int(row["row_index"]),
+                    "trial_id": row["trial_id"],
+                    "window_start_s": float(row["window_start_s"]),
+                    "window_end_s": float(row["window_end_s"]),
+                    "baseline_id": int(row["baseline_id"]),
+                    "baseline_name": row["baseline_name"],
+                    "fault_label": row["fault_label"],
+                    "is_fault": bool(row["is_fault"]),
+                    "is_anomaly": bool(row["is_anomaly"]),
+                    "dictionary_decision": row["dictionary_decision"],
+                    "matched_fault_label": row.get("matched_fault_label"),
+                    **event,
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def _event_config(dictionary: Dict[str, object]) -> Dict[str, object]:
+    cluster_config = dict(dictionary.get("clustering", {}).get("config", {}) or {})
+    rolling_window_size = int(cluster_config.get("rolling_window_size", 30))
+    return {
+        "event_window_size": int(cluster_config.get("event_window_size", rolling_window_size)),
+        "event_min_anomaly_votes": int(cluster_config.get("event_min_anomaly_votes", 3)),
+        "event_min_anomaly_fraction": float(cluster_config.get("event_min_anomaly_fraction", 0.30)),
+        "event_min_known_votes": int(cluster_config.get("event_min_known_votes", 3)),
+        "event_min_known_fraction": float(cluster_config.get("event_min_known_fraction", 0.15)),
+        "event_min_known_purity": float(cluster_config.get("event_min_known_purity", 0.50)),
+        "event_min_novel_votes": int(cluster_config.get("event_min_novel_votes", 3)),
+        "event_min_novel_fraction": float(cluster_config.get("event_min_novel_fraction", 0.15)),
+    }
+
+
+def _event_vote(history: List[Dict[str, object]], config: Dict[str, object]) -> Dict[str, object]:
+    window_count = int(len(history))
+    if window_count == 0:
+        return _event_vote_row("healthy", "", 0.0, 0, 0, 0.0, 0, 0, 0, 0, 0.0, 0.0)
+
+    anomaly_count = sum(bool(row.get("is_anomaly")) for row in history)
+    anomaly_fraction = float(anomaly_count / window_count)
+    known_labels: List[str] = []
+    novel_count = 0
+    novel_family_count = 0
+    noise_count = 0
+    insufficient_support_count = 0
+    for row in history:
+        decision = str(row.get("dictionary_decision", ""))
+        if decision == "known":
+            label = row.get("matched_fault_label")
+            if label is not None and not pd.isna(label) and str(label):
+                known_labels.append(str(label))
+        elif decision == "novel":
+            novel_count += 1
+            novel_family_count += 1
+        elif decision.startswith("novel"):
+            novel_family_count += 1
+            if decision == "novel_cluster_noise":
+                noise_count += 1
+            elif decision == "novel_insufficient_support":
+                insufficient_support_count += 1
+
+    top_label, top_known_votes = _top_count(known_labels)
+    known_vote_count = int(len(known_labels))
+    known_fraction = float(top_known_votes / window_count)
+    known_purity = float(top_known_votes / known_vote_count) if known_vote_count else 0.0
+    novel_fraction = float(novel_count / window_count)
+
+    anomaly_ready = (
+        anomaly_count >= int(config["event_min_anomaly_votes"])
+        and anomaly_fraction >= float(config["event_min_anomaly_fraction"])
+    )
+    known_ready = (
+        anomaly_ready
+        and top_known_votes >= int(config["event_min_known_votes"])
+        and known_fraction >= float(config["event_min_known_fraction"])
+        and known_purity >= float(config["event_min_known_purity"])
+    )
+    novel_ready = (
+        anomaly_ready
+        and novel_count >= int(config["event_min_novel_votes"])
+        and novel_fraction >= float(config["event_min_novel_fraction"])
+    )
+
+    if known_ready and (top_known_votes >= novel_count or not novel_ready):
+        event_decision = "known"
+        event_label = top_label
+        confidence = known_fraction
+    elif novel_ready:
+        event_decision = "novel"
+        event_label = ""
+        confidence = novel_fraction
+    elif anomaly_ready:
+        event_decision = "novel"
+        event_label = ""
+        confidence = anomaly_fraction
+    else:
+        event_decision = "healthy"
+        event_label = ""
+        confidence = 1.0 - anomaly_fraction
+
+    return _event_vote_row(
+        event_decision,
+        event_label,
+        confidence,
+        window_count,
+        anomaly_count,
+        anomaly_fraction,
+        known_vote_count,
+        top_known_votes,
+        novel_count,
+        novel_family_count,
+        known_fraction,
+        novel_fraction,
+        noise_count,
+        insufficient_support_count,
+    )
+
+
+def _event_vote_row(
+    event_decision: str,
+    event_fault_label: str,
+    event_confidence: float,
+    event_window_count: int,
+    event_anomaly_count: int,
+    event_anomaly_fraction: float,
+    event_known_vote_count: int,
+    event_top_known_vote_count: int,
+    event_novel_vote_count: int,
+    event_novel_family_vote_count: int,
+    event_known_vote_fraction: float,
+    event_novel_vote_fraction: float,
+    event_noise_vote_count: int = 0,
+    event_insufficient_support_vote_count: int = 0,
+) -> Dict[str, object]:
+    return {
+        "event_decision": event_decision,
+        "event_fault_label": event_fault_label,
+        "event_confidence": float(event_confidence),
+        "event_window_count": int(event_window_count),
+        "event_anomaly_count": int(event_anomaly_count),
+        "event_anomaly_fraction": float(event_anomaly_fraction),
+        "event_known_vote_count": int(event_known_vote_count),
+        "event_top_known_vote_count": int(event_top_known_vote_count),
+        "event_novel_vote_count": int(event_novel_vote_count),
+        "event_novel_family_vote_count": int(event_novel_family_vote_count),
+        "event_known_vote_fraction": float(event_known_vote_fraction),
+        "event_novel_vote_fraction": float(event_novel_vote_fraction),
+        "event_noise_vote_count": int(event_noise_vote_count),
+        "event_insufficient_support_vote_count": int(event_insufficient_support_vote_count),
+        "event_basis": "rolling_decision_vote",
+    }
+
+
+def _top_count(values: List[str]) -> Tuple[str, int]:
+    counts: Dict[str, int] = {}
+    for value in values:
+        counts[value] = counts.get(value, 0) + 1
+    if not counts:
+        return "", 0
+    label, count = max(counts.items(), key=lambda item: (item[1], item[0]))
+    return label, int(count)
+
+
+def _event_metrics(event_decisions: pd.DataFrame, dictionary: Dict[str, object]) -> List[Dict[str, object]]:
+    known_fault_labels = set(str(item) for item in dictionary.get("known_fault_labels", []))
+    withheld_fault_labels = set(str(item) for item in dictionary.get("withheld_fault_labels", []))
+    healthy_windows = event_decisions[~event_decisions["is_fault"].astype(bool)].copy()
+    fault_windows = event_decisions[event_decisions["is_fault"].astype(bool)].copy()
+    known_fault_windows = fault_windows[fault_windows["fault_label"].astype(str).isin(known_fault_labels)]
+    withheld_windows = fault_windows[fault_windows["fault_label"].astype(str).isin(withheld_fault_labels)]
+    rows: List[Dict[str, object]] = [
+        {
+            "scope": "overall",
+            "trial_id": "",
+            "fault_label": "",
+            "fault_window_count": int(len(fault_windows)),
+            "healthy_window_count": int(len(healthy_windows)),
+            "known_fault_window_count": int(len(known_fault_windows)),
+            "event_false_positive_rate": _mean_or_none(_event_fault_detected_mask(healthy_windows)),
+            "event_fault_detection_rate": _mean_or_none(_event_fault_detected_mask(fault_windows)),
+            "event_true_fault_isolation_rate": _mean_or_none(_correct_event_known_mask(known_fault_windows)),
+            "event_withheld_novel_rate": _mean_or_none(_event_novel_mask(withheld_windows["event_decision"]))
+            if len(withheld_windows)
+            else None,
+            "event_fault_latency_s": _overall_event_latency(event_decisions, known_fault_labels),
+        }
+    ]
+    for (trial_id, fault_label), group in fault_windows.groupby(["trial_id", "fault_label"]):
+        trial_known = group[group["fault_label"].astype(str).isin(known_fault_labels)]
+        rows.append(
+            {
+                "scope": "trial",
+                "trial_id": trial_id,
+                "fault_label": fault_label,
+                "fault_window_count": int(len(group)),
+                "healthy_window_count": "",
+                "known_fault_window_count": int(len(trial_known)),
+                "event_false_positive_rate": "",
+                "event_fault_detection_rate": _mean_or_none(_event_fault_detected_mask(group)),
+                "event_true_fault_isolation_rate": _mean_or_none(_correct_event_known_mask(trial_known)),
+                "event_withheld_novel_rate": _mean_or_none(_event_novel_mask(group["event_decision"]))
+                if str(fault_label) in withheld_fault_labels
+                else None,
+                "event_fault_latency_s": _event_latency_for_trial(
+                    event_decisions,
+                    str(trial_id),
+                    str(fault_label),
+                    known_fault_labels,
+                ),
             }
         )
     return rows
@@ -606,8 +840,26 @@ def _correct_known_mask(frame: pd.DataFrame) -> pd.Series:
     )
 
 
+def _correct_event_known_mask(frame: pd.DataFrame) -> pd.Series:
+    if frame.empty:
+        return pd.Series(dtype=bool)
+    return frame["event_decision"].eq("known") & (
+        frame["fault_label"].astype(str) == frame["event_fault_label"].astype(str)
+    )
+
+
+def _event_fault_detected_mask(frame: pd.DataFrame) -> pd.Series:
+    if frame.empty:
+        return pd.Series(dtype=bool)
+    return frame["event_decision"].astype(str).isin({"known", "novel"})
+
+
 def _novel_decision_mask(values: pd.Series) -> pd.Series:
     return values.astype(str).str.startswith("novel")
+
+
+def _event_novel_mask(values: pd.Series) -> pd.Series:
+    return values.astype(str).eq("novel")
 
 
 def _latency_for_trial(
@@ -637,6 +889,40 @@ def _overall_latency(decisions: pd.DataFrame, known_fault_labels: set) -> Option
     latencies: List[float] = []
     for (trial_id, fault_label), _group in decisions[decisions["is_fault"].astype(bool)].groupby(["trial_id", "fault_label"]):
         latency = _latency_for_trial(decisions, str(trial_id), str(fault_label), known_fault_labels)
+        if latency is not None:
+            latencies.append(latency)
+    return float(np.mean(latencies)) if latencies else None
+
+
+def _event_latency_for_trial(
+    event_decisions: pd.DataFrame,
+    trial_id: str,
+    fault_label: str,
+    known_fault_labels: set,
+) -> Optional[float]:
+    trial_fault = event_decisions[
+        event_decisions["trial_id"].astype(str).eq(trial_id)
+        & event_decisions["fault_label"].astype(str).eq(fault_label)
+        & event_decisions["is_fault"].astype(bool)
+    ]
+    if trial_fault.empty:
+        return None
+    onset = float(trial_fault["window_start_s"].min())
+    if fault_label in known_fault_labels:
+        isolated = trial_fault[_correct_event_known_mask(trial_fault)]
+    else:
+        isolated = trial_fault[_event_novel_mask(trial_fault["event_decision"])]
+    if isolated.empty:
+        return None
+    return float(max(0.0, float(isolated["window_start_s"].min()) - onset))
+
+
+def _overall_event_latency(event_decisions: pd.DataFrame, known_fault_labels: set) -> Optional[float]:
+    latencies: List[float] = []
+    for (trial_id, fault_label), _group in event_decisions[event_decisions["is_fault"].astype(bool)].groupby(
+        ["trial_id", "fault_label"]
+    ):
+        latency = _event_latency_for_trial(event_decisions, str(trial_id), str(fault_label), known_fault_labels)
         if latency is not None:
             latencies.append(latency)
     return float(np.mean(latencies)) if latencies else None
@@ -700,12 +986,18 @@ def _summary(
     dictionary_manifest: Dict[str, object],
     detection_rows: List[Dict[str, object]],
     isolation_rows: List[Dict[str, object]],
+    event_rows: List[Dict[str, object]],
     cross_domain_rows: List[Dict[str, object]],
     performance_rows: List[Dict[str, object]],
 ) -> str:
     false_positive_rate = _metric_value(detection_rows, "overall", "false_positive_rate")
     true_fault_detection_rate = _metric_value(detection_rows, "overall", "true_fault_detection_rate")
     isolation_rate = _metric_value(isolation_rows, "overall", "true_fault_isolation_rate")
+    event_false_positive_rate = _metric_value(event_rows, "overall", "event_false_positive_rate")
+    event_detection_rate = _metric_value(event_rows, "overall", "event_fault_detection_rate")
+    event_isolation_rate = _metric_value(event_rows, "overall", "event_true_fault_isolation_rate")
+    event_novel_rate = _metric_value(event_rows, "overall", "event_withheld_novel_rate")
+    event_latency = _metric_value(event_rows, "overall", "event_fault_latency_s")
     cross_available = [row for row in cross_domain_rows if row["status"] == "available"]
     forward_flops = _performance_metric_value(performance_rows, "estimated_forward_linear_flops_per_window")
     training_flops = _performance_metric_value(performance_rows, "estimated_training_linear_flops_total")
@@ -747,7 +1039,12 @@ def _summary(
             "",
             f"- False positive rate: {_format_metric(false_positive_rate)}",
             f"- True fault detection rate: {_format_metric(true_fault_detection_rate)}",
-            f"- True fault isolation rate: {_format_metric(isolation_rate)}",
+            f"- Window true fault isolation rate: {_format_metric(isolation_rate)}",
+            f"- Event false positive rate: {_format_metric(event_false_positive_rate)}",
+            f"- Event fault detection rate: {_format_metric(event_detection_rate)}",
+            f"- Event true fault isolation rate: {_format_metric(event_isolation_rate)}",
+            f"- Event withheld novel rate: {_format_metric(event_novel_rate)}",
+            f"- Event fault latency: {_format_metric(event_latency)} s",
             f"- DBCV: {_format_metric(_metric_value(isolation_rows, 'overall', 'dbcv_score'))} ({_metric_value(isolation_rows, 'overall', 'dbcv_status')})",
             f"- Cross-domain baselines with known fault anomalies: {len(cross_available)} of 4",
             f"- Estimated forward compute per 100 ms window: {_format_metric(forward_flops)} linear-layer FLOPs",
@@ -760,6 +1057,7 @@ def _summary(
             "",
             "- SDAE anomaly decisions are computed from the saved reconstruction threshold.",
             "- Known/novel decisions use squared Mahalanobis distance against Ledoit-Wolf dictionary entries.",
+            "- Event decisions smooth per-window dictionary decisions with rolling vote thresholds.",
             "- Cross-domain metrics are marked `not_available` when the dataset does not contain B1-B4 known fault anomaly windows.",
             "- CPU and RAM metrics are measured from the current process during training and offline inference benchmark runs.",
             "- FLOP counts are linear-layer estimates; activations, optimizer bookkeeping, data loading, and Python overhead are excluded.",
@@ -769,9 +1067,11 @@ def _summary(
             "",
             "- `poc_detection_metrics.csv`: detection reliability metrics",
             "- `poc_isolation_metrics.csv`: isolation metrics",
+            "- `poc_event_metrics.csv`: rolling event-level detection and isolation metrics",
             "- `poc_cross_domain_metrics.csv`: B1-B4 transfer rows",
             "- `poc_performance_metrics.csv`: FLOP estimates plus CPU/RAM usage for training and inference",
             "- `poc_window_decisions.csv`: per-window anomaly and dictionary decisions",
+            "- `poc_event_decisions.csv`: rolling event-level decisions derived from per-window decisions",
             "",
         ]
     )

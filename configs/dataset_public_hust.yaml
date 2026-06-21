@@ -1,0 +1,31 @@
+dataset_id: ds_public_hust
+source_type: external_hust
+raw_trial_root: data/raw/public_hust
+source_trials:
+  - hust_normal_train
+  - hust_normal_validation
+  - hust_inner_crack
+  - hust_outer_crack
+  - hust_ball_crack
+windowing:
+  window_ms: 100
+  stride_ms: 100
+preprocessing:
+  vibration_sample_rate_hz: 51200
+  current_sample_rate_hz: 51200
+  scalar_features: []
+  expected_input_dim: 5120
+scaling:
+  method: standard
+  fit_on: healthy_train_only
+  channel_profile: hust_single_vibration_51k2
+split:
+  strategy: by_trial
+  train:
+    - hust_normal_train
+  validation:
+    - hust_normal_validation
+  test:
+    - hust_inner_crack
+    - hust_outer_crack
+    - hust_ball_crack

@@ -1,0 +1,51 @@
+attachment_id: public_paderborn_template
+source_type: external_paderborn
+dataset_name: Paderborn University Bearing Data Center
+schema_version: 0.1.0
+source_url: https://mb.uni-paderborn.de/en/kat/main-research/datacenter/bearing-datacenter
+source_notes: >
+  Paderborn includes current and vibration channels and is the closest public match
+  to the thesis sensor plan. Download/extract the MATLAB files manually, then update
+  mat_variables to match the extracted structure if needed.
+cache_dir: data/external/paderborn
+format: mat
+default_duration_s: null
+sampling:
+  raw_sample_rate_hz: 64000
+channel_profile:
+  name: paderborn_current_vibration_64khz
+  expected_input_dim: 12800
+  vibration_channels:
+    - vibration
+  current_channels:
+    - motor_current
+  scalar_channels: []
+  scalar_features: []
+mat_variables:
+  vibration: vibration
+  motor_current: motor_current
+trials:
+  - trial_id: paderborn_healthy_train
+    baseline_id: 0
+    baseline_name: paderborn_healthy
+    fault_label: none
+    fault_induced: false
+    path: data/external/paderborn/healthy_train.mat
+  - trial_id: paderborn_healthy_validation
+    baseline_id: 0
+    baseline_name: paderborn_healthy
+    fault_label: none
+    fault_induced: false
+    path: data/external/paderborn/healthy_validation.mat
+  - trial_id: paderborn_inner_damage
+    baseline_id: 0
+    baseline_name: paderborn_artificial_damage
+    fault_label: inner_bearing_damage
+    fault_induced: true
+    path: data/external/paderborn/inner_damage.mat
+  - trial_id: paderborn_outer_damage
+    baseline_id: 0
+    baseline_name: paderborn_artificial_damage
+    fault_label: outer_bearing_damage
+    fault_induced: true
+    path: data/external/paderborn/outer_damage.mat

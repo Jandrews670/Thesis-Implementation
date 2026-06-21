@@ -1,0 +1,29 @@
+dataset_id: ds_public_femto
+source_type: external_femto
+raw_trial_root: data/raw/public_femto
+source_trials:
+  - femto_bearing1_1_train_early
+  - femto_bearing1_2_validation_early
+  - femto_bearing1_1_degraded_late
+  - femto_bearing1_2_degraded_late
+windowing:
+  window_ms: 100
+  stride_ms: 100
+preprocessing:
+  vibration_sample_rate_hz: 25600
+  current_sample_rate_hz: 25600
+  scalar_features: []
+  expected_input_dim: 5120
+scaling:
+  method: standard
+  fit_on: healthy_train_only
+  channel_profile: femto_two_axis_vibration_25k6
+split:
+  strategy: by_trial
+  train:
+    - femto_bearing1_1_train_early
+  validation:
+    - femto_bearing1_2_validation_early
+  test:
+    - femto_bearing1_1_degraded_late
+    - femto_bearing1_2_degraded_late

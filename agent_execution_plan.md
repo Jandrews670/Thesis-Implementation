@@ -67,6 +67,7 @@ As of 2026-05-14, Milestones 1-3 have been implemented and smoke-verified. Futur
 - Current plots are simple PNG training artifacts, not model architecture visualisations.
 - Objective 5 now writes `poc_performance_metrics.csv`. Keep training CPU/RAM in `metrics.json` under `performance`, and keep evaluation-time inference CPU/RAM/FLOP indicators in the Objective 5 report folder.
 - Milestone 7 has a runnable public-data path using selected CWRU bearing `.mat` files. It deliberately uses a reduced 1200-D vibration-only profile and does not pad missing current channels to the 2109-D USV schema. Use `scripts/run_objective_7_public_checks.ps1` for the Windows public-data check.
+- Additional public-bearing adapters are implemented for IMS/NASA Bearings, FEMTO/PRONOSTIA, HUST, and Paderborn. They are config-driven local-file adapters with tested miniature fixtures, not guaranteed one-command downloads. Use `scripts/run_public_bearing_adapter_checks.ps1` or `.sh` to verify the adapter contract, then update the relevant `configs/public_*.yaml` paths after extracting the real datasets.
 
 ### Key Existing Source Documents
 
@@ -554,6 +555,8 @@ trial reader -> window builder -> scaler -> model -> reconstruction error -> lat
 
 Known/novel decisions should compare the current rolling anomaly cluster to stored dictionary clusters, not a single latent point to the dictionary. Use the last 30 latent windows, cluster the anomalous latents inside that temporal buffer, use HDBSCAN labels for the current point, then apply centroid Mahalanobis distance to dictionary entries and a member-inlier fraction gate.
 
+Evaluation should also write an event-level layer that smooths per-window decisions with rolling votes. Keep `poc_window_decisions.csv` as the diagnostic row-level output, and write `poc_event_decisions.csv` plus `poc_event_metrics.csv` for report-ready event declarations.
+
 Write:
 
 ```text
@@ -635,7 +638,7 @@ Success means baseline SDAE, FedRep, and DANN can all be evaluated by the same e
 
 ## 10. Milestone 7: Public Dataset Adapter
 
-Status: CWRU public-data adapter implemented and smoke-tested through Objective 5. Paderborn remains the preferred final public source because it includes current and vibration, but the official Paderborn downloads are large RAR archives; the runnable Objective 7 path uses CWRU as the reduced vibration-only public realism check.
+Status: CWRU public-data adapter implemented and smoke-tested through Objective 5. Additional config-driven local-file adapters now exist for IMS/NASA Bearings, FEMTO/PRONOSTIA, HUST, and Paderborn. Paderborn remains the preferred public source for final alignment because it includes current and vibration, but the official Paderborn downloads are large RAR archives; the runnable automated Objective 7 path still uses CWRU as the reduced vibration-only public realism check.
 
 ### Preferred Dataset
 
@@ -666,6 +669,37 @@ The one-command check is:
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\run_objective_7_public_checks.ps1
 ```
+
+Implemented local-file adapter templates:
+
+```text
+--source ims        configs/public_ims.yaml        20 kHz single vibration channel, 2000-D windows
+--source femto      configs/public_femto.yaml      25.6 kHz two-axis acceleration, 5120-D windows
+--source hust       configs/public_hust.yaml       51.2 kHz single vibration channel, 5120-D windows
+--source paderborn  configs/public_paderborn.yaml  64 kHz vibration + current, 12800-D windows
+```
+
+Each has matching dataset, SDAE, and HDBSCAN/event configs:
+
+```text
+dataset_public_<name>.yaml
+baseline_sdae_public_<name>.yaml
+hdbscan_public_<name>.yaml
+```
+
+Run the adapter contract checks:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\run_public_bearing_adapter_checks.ps1
+```
+
+Linux/container equivalent:
+
+```bash
+bash scripts/run_public_bearing_adapter_checks.sh
+```
+
+The tests create miniature local text/CSV/MATLAB files and verify that all four adapters write canonical raw trial folders with manifests, telemetry, events, notes, and quality reports. They do not download the full public datasets.
 
 Current CWRU parameters:
 

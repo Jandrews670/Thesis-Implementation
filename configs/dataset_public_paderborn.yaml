@@ -1,0 +1,29 @@
+dataset_id: ds_public_paderborn
+source_type: external_paderborn
+raw_trial_root: data/raw/public_paderborn
+source_trials:
+  - paderborn_healthy_train
+  - paderborn_healthy_validation
+  - paderborn_inner_damage
+  - paderborn_outer_damage
+windowing:
+  window_ms: 100
+  stride_ms: 100
+preprocessing:
+  vibration_sample_rate_hz: 64000
+  current_sample_rate_hz: 64000
+  scalar_features: []
+  expected_input_dim: 12800
+scaling:
+  method: standard
+  fit_on: healthy_train_only
+  channel_profile: paderborn_current_vibration_64khz
+split:
+  strategy: by_trial
+  train:
+    - paderborn_healthy_train
+  validation:
+    - paderborn_healthy_validation
+  test:
+    - paderborn_inner_damage
+    - paderborn_outer_damage

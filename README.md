@@ -19,8 +19,6 @@ The repository is organised so the implementation can be inspected without needi
 | `artifacts/` | Generated trained models, scalers, thresholds, dictionaries, plots, and manifests. Ignored by git. |
 | `runs/` | Generated evaluation reports, sweeps, replay logs, and local run outputs. Ignored by git. |
 
-Local planning notes and agent handoff files have been moved to `internal_notes/`, which is ignored by git. They are not required to run or assess the implementation.
-
 The main implementation flow is:
 
 ```text

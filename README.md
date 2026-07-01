@@ -12,10 +12,9 @@ The repository is organised so the implementation can be inspected without needi
 | `configs/` | Reproducible YAML configs for synthetic data, public bearing datasets, SDAE model shapes, HDBSCAN/dictionary parameters, and known/withheld fault labels. |
 | `tests/` | Unit and smoke tests for the implemented objectives, including synthetic data, 2109-D windowing, SDAE artifact creation, dictionary generation, evaluation reports, replay logs, and public bearing adapters. |
 | `scripts/` | PowerShell/Bash helpers for setup, objective smoke checks, Docker build/test/shell commands, public dataset checks, Mahalanobis sweeps, and FEMTO degradation analysis. |
-| `Dockerfile` and `docker-compose.yml` | Linux container path intended to make Windows development and Raspberry Pi deployment use the same Python/PyTorch/HDBSCAN environment. |
+| `Dockerfile` and `docker-compose.yml` | Linux container path for reproducible dependency checks outside the local Windows virtual environment. |
 | `README.md` | This high-level repository guide and command reference. |
 | `USER_GUIDE.md` | More detailed user workflow documentation. |
-| `RASPBERRY_PI_SETUP.md` | Raspberry Pi Docker setup and deployment checklist. |
 | `data/` | Generated raw and processed datasets. Ignored by git because these can be large and can be regenerated. |
 | `artifacts/` | Generated trained models, scalers, thresholds, dictionaries, plots, and manifests. Ignored by git. |
 | `runs/` | Generated evaluation reports, sweeps, replay logs, and local run outputs. Ignored by git. |
@@ -46,11 +45,9 @@ This creates `.venv` with `--system-site-packages` so the project can reuse the 
 
 On Windows/Python 3.9, `hdbscan==0.8.40` is pinned because that version has a prebuilt wheel in this environment. Newer HDBSCAN releases may try to compile from source and require Microsoft C++ Build Tools.
 
-## Docker and Raspberry Pi Linux
+## Docker Linux Container
 
-The recommended Raspberry Pi path is to run the same Linux container during Windows development and on the Pi. The image is intentionally a full training image: it includes PyTorch, HDBSCAN, SciPy, scikit-learn, Matplotlib, build tools, OpenBLAS/LAPACK, and the package itself. This keeps the current SDAE training, dictionary generation, evaluation, and future FedRep/DANN training paths inside one reproducible Linux environment.
-
-For the full Pi setup checklist, see [RASPBERRY_PI_SETUP.md](RASPBERRY_PI_SETUP.md).
+The Docker image is a full training/evaluation image. It includes PyTorch, HDBSCAN, SciPy, scikit-learn, Matplotlib, build tools, OpenBLAS/LAPACK, and the package itself. Use it when you want to run the project inside a clean Linux environment instead of the local Windows virtual environment.
 
 Start Docker Desktop first, then build and test from Windows:
 
@@ -59,7 +56,7 @@ Start Docker Desktop first, then build and test from Windows:
 .\scripts\docker_test.ps1
 ```
 
-The default Docker build installs CPU-only PyTorch from `https://download.pytorch.org/whl/cpu`. That avoids the very large CUDA dependency downloads that are unnecessary for Raspberry Pi. If a particular ARM64/Pi Python environment cannot resolve the CPU index wheel, fall back to the normal PyPI Torch resolver:
+The default Docker build installs CPU-only PyTorch from `https://download.pytorch.org/whl/cpu`. That avoids large CUDA dependency downloads. If that resolver fails in a target Linux environment, fall back to the normal PyPI Torch resolver:
 
 ```powershell
 .\scripts\docker_build.ps1 -TorchIndexUrl ""
@@ -69,31 +66,6 @@ Open a shell in the container:
 
 ```powershell
 .\scripts\docker_shell.ps1
-```
-
-Build an ARM64 image from Windows for Raspberry Pi compatibility testing:
-
-```powershell
-.\scripts\docker_build.ps1 -Platform linux/arm64 -Tag usv-faults:pi
-```
-
-On the Raspberry Pi, install Docker Engine, clone or copy this repository, then run:
-
-```bash
-bash scripts/docker_build.sh
-bash scripts/docker_test.sh
-```
-
-The short Pi checklist is:
-
-```bash
-uname -m
-getconf LONG_BIT
-dpkg --print-architecture
-docker compose version
-cd ~/usv-faults
-bash scripts/docker_build.sh
-bash scripts/docker_test.sh
 ```
 
 Linux fallback to PyPI Torch resolution:
@@ -109,13 +81,7 @@ bash scripts/run_container_checks.sh
 bash scripts/run_objective_5_checks.sh
 ```
 
-For future live Teensy access, run the container with the serial device mounted, for example:
-
-```bash
-docker compose run --rm --device /dev/ttyACM0:/dev/ttyACM0 usv-faults bash
-```
-
-Containerisation makes the Python/Linux software environment reproducible, but it does not remove the need to validate Pi-specific serial permissions, CPU/RAM/power measurements, and hardware timing on the actual Raspberry Pi.
+Containerisation makes the Python/Linux software environment more reproducible. Hardware deployment notes are intentionally outside the current public setup guide.
 
 Run the objective 1 checks:
 

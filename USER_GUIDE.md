@@ -18,7 +18,7 @@ The current implementation supports:
 - public IMS, FEMTO/PRONOSTIA, HUST, and Paderborn bearing dataset attachment templates
 - training artifacts and basic plots
 
-It does not yet support production FedRep/DANN validation or live Teensy/Raspberry Pi collection. Those remain later milestones and require real domain/hardware data.
+It does not yet support production FedRep/DANN validation or live hardware collection. Those remain later milestones and require real domain/hardware data.
 
 ## 1. Environment Setup
 
@@ -53,13 +53,7 @@ Then call the CLI as:
 
 ## 1.1 Containerised Linux Setup
 
-Use Docker when you want the Windows development machine and Raspberry Pi to run the same Linux software environment. The project image is a full training/evaluation image, not an inference-only image. It installs PyTorch, HDBSCAN, SciPy, scikit-learn, Matplotlib, OpenBLAS/LAPACK, and compiler tools so the Pi can run training and dictionary generation as well as replay/evaluation.
-
-For the detailed Raspberry Pi checklist, including Docker Engine installation, serial-device mounting, and cleanup commands, see:
-
-```text
-RASPBERRY_PI_SETUP.md
-```
+Use Docker when you want to run the project inside a clean Linux software environment. The project image is a full training/evaluation image, not an inference-only image. It installs PyTorch, HDBSCAN, SciPy, scikit-learn, Matplotlib, OpenBLAS/LAPACK, and compiler tools so training, dictionary generation, replay, and evaluation can run inside the container.
 
 From Windows, start Docker Desktop first, then run:
 
@@ -74,7 +68,7 @@ By default the Docker build installs CPU-only PyTorch from:
 https://download.pytorch.org/whl/cpu
 ```
 
-This keeps the image much smaller than the default Linux PyPI Torch install, which may download CUDA packages that are not useful on Raspberry Pi. If the Pi/ARM64 build cannot resolve a CPU-index Torch wheel, fall back to normal PyPI resolution:
+This keeps the image much smaller than the default Linux PyPI Torch install, which may download CUDA packages that are not useful for CPU-only work. If the CPU-index Torch wheel cannot be resolved in a target Linux environment, fall back to normal PyPI resolution:
 
 ```powershell
 .\scripts\docker_build.ps1 -TorchIndexUrl ""
@@ -85,24 +79,6 @@ Open a Linux shell in the project container:
 ```powershell
 .\scripts\docker_shell.ps1
 ```
-
-Build an ARM64 image from Windows for Raspberry Pi compatibility testing:
-
-```powershell
-.\scripts\docker_build.ps1 -Platform linux/arm64 -Tag usv-faults:pi
-```
-
-From Raspberry Pi OS or another 64-bit Linux install on the Pi:
-
-```bash
-uname -m
-getconf LONG_BIT
-dpkg --print-architecture
-bash scripts/docker_build.sh
-bash scripts/docker_test.sh
-```
-
-The expected architecture checks are `aarch64`, `64`, and `arm64`. If the Pi reports a 32-bit userland, reinstall a 64-bit OS before trying to run the full training container.
 
 Linux fallback to normal PyPI Torch resolution:
 
@@ -134,19 +110,7 @@ bash scripts/run_objective_5_checks.sh
 
 The container mounts the repository into `/app`, so generated `data/`, `artifacts/`, and `runs/` folders appear on the host machine. These folders are ignored during image builds so trained models and datasets are not baked into the Docker image.
 
-For future live Teensy/Raspberry Pi serial work, pass the serial device into the container:
-
-```bash
-docker compose run --rm --device /dev/ttyACM0:/dev/ttyACM0 usv-faults bash
-```
-
-If the Pi user cannot access the device, add the user to the relevant Linux group, commonly `dialout`, then log out and back in:
-
-```bash
-sudo usermod -aG dialout "$USER"
-```
-
-Containerisation standardises Python and Linux dependencies, but target-hardware measurements still need to be collected on the Pi. In particular, CPU usage, RAM usage, power draw, serial latency, and thermal throttling cannot be proven by the Windows container alone.
+Containerisation standardises Python and Linux dependencies. Hardware deployment notes are intentionally outside the current public setup guide.
 
 ## 2. Choose the Config Set
 
@@ -563,7 +527,7 @@ To add another fault trial, add it under a fault trial set, set `fault_start_s` 
 - Latent vectors are currently exported by `build-dictionary`, not by `train-sdae`.
 - HDBSCAN, Ledoit-Wolf covariance, and chi-square thresholds require the package dependencies listed in `pyproject.toml`.
 - There is no live hardware ingestion yet; `run` currently supports replay only.
-- CPU and RAM are measured for training/evaluation reports, but power and thermal behaviour still require target Raspberry Pi hardware measurements.
+- CPU and RAM are measured for training/evaluation reports, but power and thermal behaviour still require target-hardware measurements.
 - The current smoke config is for fast validation, not final thesis evidence.
 
 For final thesis runs, use longer trials and the full model config before interpreting metrics scientifically.

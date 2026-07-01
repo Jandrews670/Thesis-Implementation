@@ -21,25 +21,39 @@ from usv_faults.performance import PerformanceSampler, sdae_compute_estimates
 from usv_faults.preprocessing.feature_scaling import StandardFeatureScaler
 
 
-def evaluate_pipeline(model_dir: Path, dictionary_dir: Path, dataset_dir: Path, out_dir: Path) -> Dict[str, object]:
+DEFAULT_METRIC_WARMUP_WINDOWS = 10
+
+
+def evaluate_pipeline(
+    model_dir: Path,
+    dictionary_dir: Path,
+    dataset_dir: Path,
+    out_dir: Path,
+    metric_warmup_windows: int = DEFAULT_METRIC_WARMUP_WINDOWS,
+) -> Dict[str, object]:
+    if metric_warmup_windows < 0:
+        raise ValueError("metric_warmup_windows must be non-negative")
     out_dir.mkdir(parents=True, exist_ok=True)
     dictionary = load_fault_dictionary(dictionary_dir)
     dictionary_manifest = read_yaml(dictionary_dir / "dictionary_manifest.yaml")
     model_manifest = read_yaml(model_dir / "run_manifest.yaml")
     dataset_manifest = read_yaml(dataset_dir / "dataset_manifest.yaml")
     extraction = extract_latent_windows(model_dir, dataset_dir)
-    frame = extraction.frame.copy()
+    frame = _annotate_metric_warmup(extraction.frame.copy(), metric_warmup_windows)
 
     decisions = _decisions_for_frame(frame, extraction.latent_columns, dictionary)
     decisions.to_csv(out_dir / "poc_window_decisions.csv", index=False)
     event_decisions = _event_decisions_for_frame(decisions, dictionary)
     event_decisions.to_csv(out_dir / "poc_event_decisions.csv", index=False)
 
+    metric_frame = _metric_included(frame)
+    metric_decisions = _metric_included(decisions)
+    metric_event_decisions = _metric_included(event_decisions)
     dbcv_score, dbcv_status = _dbcv_from_cluster_artifact(dictionary_dir)
-    detection_rows = _detection_metrics(frame, model_dir)
-    isolation_rows = _isolation_metrics(decisions, dictionary, dbcv_score, dbcv_status)
-    event_rows = _event_metrics(event_decisions, dictionary)
-    cross_domain_rows = _cross_domain_metrics(decisions, extraction.latent_columns, dictionary)
+    detection_rows = _detection_metrics(metric_frame, model_dir)
+    isolation_rows = _isolation_metrics(metric_decisions, dictionary, dbcv_score, dbcv_status)
+    event_rows = _event_metrics(metric_event_decisions, dictionary)
+    cross_domain_rows = _cross_domain_metrics(metric_decisions, extraction.latent_columns, dictionary)
     performance_rows = _performance_metrics(model_dir, dataset_dir)
 
     _write_csv(out_dir / "poc_detection_metrics.csv", detection_rows)
@@ -61,6 +75,10 @@ def evaluate_pipeline(model_dir: Path, dictionary_dir: Path, dataset_dir: Path, 
         event_rows=event_rows,
         cross_domain_rows=cross_domain_rows,
         performance_rows=performance_rows,
+        metric_warmup_windows=metric_warmup_windows,
+        raw_window_count=len(frame),
+        metric_window_count=len(metric_frame),
+        metric_excluded_window_count=int(frame["metric_excluded"].astype(bool).sum()),
     )
     (out_dir / "poc_summary.md").write_text(summary, encoding="utf-8")
 
@@ -68,6 +86,9 @@ def evaluate_pipeline(model_dir: Path, dictionary_dir: Path, dataset_dir: Path, 
         "out_dir": str(out_dir),
         "window_count": int(len(frame)),
         "anomaly_count": int(frame["is_anomaly"].astype(bool).sum()),
+        "metric_warmup_windows": int(metric_warmup_windows),
+        "metric_window_count": int(len(metric_frame)),
+        "metric_excluded_window_count": int(frame["metric_excluded"].astype(bool).sum()),
         "false_positive_rate": _metric_value(detection_rows, "overall", "false_positive_rate"),
         "true_fault_detection_rate": _metric_value(detection_rows, "overall", "true_fault_detection_rate"),
         "true_fault_isolation_rate": _metric_value(isolation_rows, "overall", "true_fault_isolation_rate"),
@@ -125,6 +146,10 @@ def _decisions_for_frame(
                     "baseline_name": row["baseline_name"],
                     "fault_label": row["fault_label"],
                     "is_fault": bool(row["is_fault"]),
+                    "state_segment_id": int(row["state_segment_id"]),
+                    "state_window_index": int(row["state_window_index"]),
+                    "metric_excluded": bool(row["metric_excluded"]),
+                    "metric_exclusion_reason": row["metric_exclusion_reason"],
                     "reconstruction_error": float(row["reconstruction_error"]),
                     "is_anomaly": is_anomaly,
                     "runtime_cluster_label": int(runtime_cluster_label),
@@ -141,6 +166,44 @@ def _decisions_for_frame(
                 }
             )
     return pd.DataFrame(rows)
+
+
+def _annotate_metric_warmup(frame: pd.DataFrame, metric_warmup_windows: int) -> pd.DataFrame:
+    annotated = frame.copy()
+    segment_ids = pd.Series(index=annotated.index, dtype="int64")
+    state_indices = pd.Series(index=annotated.index, dtype="int64")
+
+    for _trial_id, trial_frame in annotated.groupby("trial_id", sort=False):
+        current_state: Optional[Tuple[object, ...]] = None
+        segment_id = -1
+        state_index = 0
+        for index, row in trial_frame.iterrows():
+            state = (
+                int(row["baseline_id"]),
+                str(row.get("baseline_name", "")),
+                str(row["fault_label"]),
+                bool(row["is_fault"]),
+            )
+            if state != current_state:
+                segment_id += 1
+                state_index = 0
+                current_state = state
+            segment_ids.loc[index] = segment_id
+            state_indices.loc[index] = state_index
+            state_index += 1
+
+    annotated["state_segment_id"] = segment_ids.astype(int)
+    annotated["state_window_index"] = state_indices.astype(int)
+    annotated["metric_excluded"] = annotated["state_window_index"].astype(int) < int(metric_warmup_windows)
+    reason = f"first_{int(metric_warmup_windows)}_windows_of_state" if metric_warmup_windows else ""
+    annotated["metric_exclusion_reason"] = np.where(annotated["metric_excluded"], reason, "")
+    return annotated
+
+
+def _metric_included(frame: pd.DataFrame) -> pd.DataFrame:
+    if "metric_excluded" not in frame.columns:
+        return frame.copy()
+    return frame[~frame["metric_excluded"].astype(bool)].copy()
 
 
 def _current_cluster_match(
@@ -311,6 +374,10 @@ def _event_decisions_for_frame(decisions: pd.DataFrame, dictionary: Dict[str, ob
                     "baseline_name": row["baseline_name"],
                     "fault_label": row["fault_label"],
                     "is_fault": bool(row["is_fault"]),
+                    "state_segment_id": int(row["state_segment_id"]),
+                    "state_window_index": int(row["state_window_index"]),
+                    "metric_excluded": bool(row["metric_excluded"]),
+                    "metric_exclusion_reason": row["metric_exclusion_reason"],
                     "is_anomaly": bool(row["is_anomaly"]),
                     "dictionary_decision": row["dictionary_decision"],
                     "matched_fault_label": row.get("matched_fault_label"),
@@ -989,6 +1056,10 @@ def _summary(
     event_rows: List[Dict[str, object]],
     cross_domain_rows: List[Dict[str, object]],
     performance_rows: List[Dict[str, object]],
+    metric_warmup_windows: int,
+    raw_window_count: int,
+    metric_window_count: int,
+    metric_excluded_window_count: int,
 ) -> str:
     false_positive_rate = _metric_value(detection_rows, "overall", "false_positive_rate")
     true_fault_detection_rate = _metric_value(detection_rows, "overall", "true_fault_detection_rate")
@@ -1037,6 +1108,8 @@ def _summary(
             "",
             "## Metrics",
             "",
+            f"- Metric warmup exclusion: first {metric_warmup_windows} windows of each contiguous trial/baseline/fault state",
+            f"- Metric windows: {metric_window_count} included of {raw_window_count} raw windows ({metric_excluded_window_count} excluded)",
             f"- False positive rate: {_format_metric(false_positive_rate)}",
             f"- True fault detection rate: {_format_metric(true_fault_detection_rate)}",
             f"- Window true fault isolation rate: {_format_metric(isolation_rate)}",

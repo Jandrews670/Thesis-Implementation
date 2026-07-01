@@ -101,10 +101,17 @@ def _cmd_build_dictionary(args: argparse.Namespace) -> int:
 
 
 def _cmd_evaluate(args: argparse.Namespace) -> int:
-    result = evaluate_pipeline(args.model, args.dictionary, args.dataset, args.out)
+    result = evaluate_pipeline(
+        args.model,
+        args.dictionary,
+        args.dataset,
+        args.out,
+        metric_warmup_windows=args.metric_warmup_windows,
+    )
     print(
         f"Evaluated model={args.model} dictionary={args.dictionary} on {result['window_count']} windows; "
-        f"anomalies={result['anomaly_count']}; reports={result['out_dir']}"
+        f"anomalies={result['anomaly_count']}; metric_windows={result['metric_window_count']}; "
+        f"warmup_excluded={result['metric_excluded_window_count']}; reports={result['out_dir']}"
     )
     return 0
 
@@ -163,6 +170,13 @@ def build_parser() -> argparse.ArgumentParser:
     evaluate.add_argument("--dictionary", required=True, type=Path)
     evaluate.add_argument("--dataset", required=True, type=Path)
     evaluate.add_argument("--out", required=True, type=Path)
+    evaluate.add_argument(
+        "--metric-warmup-windows",
+        required=False,
+        type=int,
+        default=10,
+        help="Exclude this many initial windows from each contiguous trial/baseline/fault state in metric CSVs.",
+    )
     evaluate.set_defaults(func=_cmd_evaluate)
 
     run = subparsers.add_parser("run", help="Run replay or live inference.")

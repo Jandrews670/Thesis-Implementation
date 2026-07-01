@@ -5,6 +5,10 @@ metric: euclidean
 cluster_selection_method: eom
 allow_single_cluster: true
 mahalanobis_confidence: 0.99
+mahalanobis_empirical_enabled: true
+mahalanobis_empirical_percentile: 0.95
+mahalanobis_empirical_margin: 1.0
+mahalanobis_empirical_min_samples: 5
 min_runtime_cluster_size: 15
 cluster_match_min_member_fraction: 0.50
 event_window_size: 30

@@ -91,6 +91,13 @@ class ObjectiveFourTests(unittest.TestCase):
             self.assertEqual(first_entry["covariance_estimator"], "sklearn.covariance.LedoitWolf")
             self.assertEqual(first_entry["label"], "bearing_impulse")
             self.assertGreater(first_entry["sample_count"], 0)
+            self.assertIn("mahalanobis_chi_square_threshold", first_entry)
+            self.assertIn("mahalanobis_effective_threshold", first_entry)
+            self.assertIn("mahalanobis_empirical_status", first_entry)
+            self.assertLessEqual(
+                float(first_entry["mahalanobis_effective_threshold"]),
+                float(first_entry["mahalanobis_chi_square_threshold"]),
+            )
 
     def test_cluster_dictionary_decision_uses_passing_cluster_gate(self) -> None:
         import numpy as np
@@ -124,6 +131,33 @@ class ObjectiveFourTests(unittest.TestCase):
         self.assertEqual(decision["fault_id"], "passing_fault")
         self.assertEqual(decision["cluster_support_count"], 3)
         self.assertGreaterEqual(decision["cluster_member_inlier_fraction"], 0.5)
+
+    def test_empirical_threshold_rejects_chi_square_only_match(self) -> None:
+        import numpy as np
+
+        dictionary = {
+            "clustering": {"config": {"cluster_match_min_member_fraction": 0.0}},
+            "entries": [
+                {
+                    "fault_id": "tight_fault",
+                    "label": "tight_fault",
+                    "cluster_label": 0,
+                    "centroid": [0.0, 0.0],
+                    "precision": [[1.0, 0.0], [0.0, 1.0]],
+                    "mahalanobis_threshold": 5.0,
+                    "mahalanobis_effective_threshold": 5.0,
+                    "mahalanobis_chi_square_threshold": 32.0,
+                }
+            ],
+        }
+        latents = np.asarray([[4.0, 0.0], [4.1, 0.0], [3.9, 0.0]], dtype=np.float64)
+
+        decision = decide_latent_cluster(latents, dictionary)
+
+        self.assertEqual(decision["decision"], "novel_empirical_threshold")
+        self.assertEqual(decision["fault_id"], "tight_fault")
+        self.assertGreater(decision["distance"], decision["threshold"])
+        self.assertLess(decision["distance"], decision["chi_square_threshold"])
 
 
 if __name__ == "__main__":

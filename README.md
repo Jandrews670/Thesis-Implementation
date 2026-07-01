@@ -1,6 +1,38 @@
 # USV Faults Proof of Concept
 
-This package implements the proof-of-concept pipeline described in the thesis implementation plans.
+This package implements the thesis proof-of-concept pipeline for USV fault detection and isolation. The implemented baseline is a sparse denoising autoencoder (SDAE) for healthy-behaviour modelling, HDBSCAN latent fault grouping, and a Ledoit-Wolf/Mahalanobis dictionary for known/novel fault decisions.
+
+## Guide for Markers
+
+The repository is organised so the implementation can be inspected without needing generated datasets or local planning notes.
+
+| Path | Purpose |
+|---|---|
+| `src/usv_faults/` | Main Python package. This contains source adapters, raw-trial storage, preprocessing/windowing, SDAE training, HDBSCAN/Mahalanobis dictionary construction, evaluation, replay, and performance measurement. |
+| `configs/` | Reproducible YAML configs for synthetic data, public bearing datasets, SDAE model shapes, HDBSCAN/dictionary parameters, and known/withheld fault labels. |
+| `tests/` | Unit and smoke tests for the implemented objectives, including synthetic data, 2109-D windowing, SDAE artifact creation, dictionary generation, evaluation reports, replay logs, and public bearing adapters. |
+| `scripts/` | PowerShell/Bash helpers for setup, objective smoke checks, Docker build/test/shell commands, public dataset checks, Mahalanobis sweeps, and FEMTO degradation analysis. |
+| `Dockerfile` and `docker-compose.yml` | Linux container path intended to make Windows development and Raspberry Pi deployment use the same Python/PyTorch/HDBSCAN environment. |
+| `README.md` | This high-level repository guide and command reference. |
+| `USER_GUIDE.md` | More detailed user workflow documentation. |
+| `RASPBERRY_PI_SETUP.md` | Raspberry Pi Docker setup and deployment checklist. |
+| `data/` | Generated raw and processed datasets. Ignored by git because these can be large and can be regenerated. |
+| `artifacts/` | Generated trained models, scalers, thresholds, dictionaries, plots, and manifests. Ignored by git. |
+| `runs/` | Generated evaluation reports, sweeps, replay logs, and local run outputs. Ignored by git. |
+
+Local planning notes and agent handoff files have been moved to `internal_notes/`, which is ignored by git. They are not required to run or assess the implementation.
+
+The main implementation flow is:
+
+```text
+attach-data -> qc/preview -> make-dataset -> train-sdae -> build-dictionary -> evaluate/run
+```
+
+The core CLI is:
+
+```powershell
+.\.venv\Scripts\python.exe -B -m usv_faults.cli --help
+```
 
 ## Local Environment
 
@@ -140,6 +172,10 @@ metric: euclidean
 cluster_selection_method: eom
 allow_single_cluster: true
 mahalanobis_confidence: 0.99
+mahalanobis_empirical_enabled: true
+mahalanobis_empirical_percentile: 0.95
+mahalanobis_empirical_margin: 1.0
+mahalanobis_empirical_min_samples: 5
 min_runtime_cluster_size: 15
 cluster_match_min_member_fraction: 0.50
 dictionary_baseline_id: 0
@@ -147,7 +183,7 @@ known_fault_labels: [bearing_impulse, propeller_imbalance]
 withheld_fault_labels: [shaft_rub]
 ```
 
-For smoke training, the SDAE latent dimension is `16`, so the Mahalanobis known/novel threshold is `chi2.ppf(0.99, 16) = 31.9999`. For the thesis-default latent dimension of `420`, the same rule gives the planned threshold near `487.6`.
+For smoke training, the SDAE latent dimension is `16`, so the theoretical Mahalanobis known/novel threshold is `chi2.ppf(0.99, 16) = 31.9999`. When `mahalanobis_empirical_enabled` is true, each dictionary entry uses the tighter of that chi-square threshold and its own source-cluster empirical radius. Set `mahalanobis_empirical_enabled: false` to restore the chi-square-only decision gate.
 
 The Objective 4 tests verify the statistical pieces directly and then run a reduced integration path through synthetic data, dataset generation, SDAE training, HDBSCAN clustering, Ledoit-Wolf dictionary creation, and artifact writing.
 
@@ -162,6 +198,8 @@ Objective 5 evaluates a trained model and dictionary against a processed dataset
 ```powershell
 .\.venv\Scripts\python.exe -m usv_faults.cli evaluate --model artifacts/models/run_poc_sdae_smoke_objective_5 --dictionary artifacts/dictionaries/dict_poc_b0_smoke_objective_5 --dataset data/processed/datasets/ds_poc_synthetic_training_smoke --out runs/reports/objective_5_smoke
 ```
+
+Evaluation metrics exclude the first 10 windows of each contiguous trial/baseline/fault state by default. This avoids scoring short startup or state-transition transients now that event-level voting is the main reporting layer. The raw `poc_window_decisions.csv` and `poc_event_decisions.csv` files still contain every window and include `state_window_index`, `metric_excluded`, and `metric_exclusion_reason` columns. Use `--metric-warmup-windows 0` to reproduce the old no-skip metric behaviour.
 
 It writes:
 
@@ -179,6 +217,8 @@ poc_summary.md
 `poc_performance_metrics.csv` records Objective 5 performance indicators for the trained SDAE artifact. It includes parameter count, estimated forward FLOPs per 100 ms window, estimated training FLOPs, measured training CPU/RAM from `train-sdae`, and measured offline inference CPU/RAM/latency from `evaluate`.
 
 `poc_window_decisions.csv` remains the per-window SDAE/HDBSCAN/Mahalanobis decision log. `poc_event_decisions.csv` adds a rolling event layer that votes over recent window decisions, and `poc_event_metrics.csv` reports event-level false positive, detection, known-fault isolation, withheld-novel, and latency metrics.
+
+Latest public-dataset Mahalanobis sweeps are generated under `runs/reports/mahalanobis_confidence_sweep/`. The current evidence compares chi-square-only thresholds against empirical `p=0.74` thresholds across CWRU, expanded IMS, and FEMTO with the 10-window metric warmup active. The empirical `p=0.74` setting fixes the IMS withheld-novel failure case while preserving strong CWRU withheld-novel behavior.
 
 Objective 5 also adds replay runtime logging from a raw trial folder:
 

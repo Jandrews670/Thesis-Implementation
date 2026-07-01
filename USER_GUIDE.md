@@ -582,6 +582,10 @@ metric: euclidean
 cluster_selection_method: eom
 allow_single_cluster: true
 mahalanobis_confidence: 0.99
+mahalanobis_empirical_enabled: true
+mahalanobis_empirical_percentile: 0.95
+mahalanobis_empirical_margin: 1.0
+mahalanobis_empirical_min_samples: 5
 min_runtime_cluster_size: 15
 cluster_match_min_member_fraction: 0.50
 dictionary_baseline_id: 0
@@ -600,7 +604,10 @@ The dictionary builder:
 - excludes labels listed in `withheld_fault_labels`
 - clusters candidate latents using `hdbscan.HDBSCAN`
 - estimates each cluster covariance and precision matrix using `sklearn.covariance.LedoitWolf`
-- computes the squared-Mahalanobis known/novel threshold with `scipy.stats.chi2.ppf`
+- computes the theoretical squared-Mahalanobis known/novel threshold with `scipy.stats.chi2.ppf`
+- optionally tightens each entry with a source-cluster empirical Mahalanobis radius
+
+With `mahalanobis_empirical_enabled: true`, the stored `mahalanobis_threshold` is the effective threshold used at runtime. The original chi-square boundary is still recorded as `mahalanobis_chi_square_threshold`. Set `mahalanobis_empirical_enabled: false` to use the original chi-square-only gate.
 
 At evaluation/replay time, known/novel decisions are made from a rolling HDBSCAN cluster rather than from one isolated latent point. The runtime path keeps the last 30 latent windows, clusters the anomalous latents inside that temporal buffer, finds the current point's runtime cluster, compares that cluster centroid to stored dictionary centroids, and also requires a configurable fraction of runtime cluster members to fall inside the stored Mahalanobis boundary.
 
@@ -699,6 +706,9 @@ poc_summary.md
 
 Current metric behavior:
 
+- detection, isolation, event, and cross-domain summary metrics exclude the first 10 windows of each contiguous trial/baseline/fault state by default
+- raw decision files still include every window and mark skipped rows with `state_window_index`, `metric_excluded`, and `metric_exclusion_reason`
+- pass `--metric-warmup-windows 0` to `evaluate` to reproduce the older no-skip metric behavior
 - false positive rate is measured on healthy windows
 - true fault detection rate is measured on fault windows flagged by the SDAE threshold
 - true fault isolation rate is measured on known fault anomaly windows whose rolling runtime cluster matches the correct dictionary label
@@ -730,6 +740,8 @@ Current metric behavior:
 The FLOP estimates are linear-layer estimates only. Forward FLOPs count multiply-adds as 2 FLOPs plus bias additions. Training FLOPs are approximated as 3x forward FLOPs per training window. Activations, optimizer bookkeeping, data loading, HDBSCAN, Pandas/PyArrow work, and Python overhead are not included in the static FLOP estimate, but CPU/RAM measurements do include real process overhead during the measured blocks.
 
 The event layer does not replace `poc_window_decisions.csv`. It writes `poc_event_decisions.csv` by counting recent anomaly, known-label, and novel votes over a rolling event window. Sustained anomalies with enough matching known votes become an event-level `known` fault; sustained anomalies without a known majority become event-level `novel`.
+
+The latest Mahalanobis confidence sweeps are generated under `runs/reports/mahalanobis_confidence_sweep/`. They compare chi-square-only matching with empirical `p=0.74` matching across CWRU, expanded IMS, and FEMTO while excluding the first 10 windows of each state from metrics. The empirical `p=0.74` gate is the current best-supported setting for the public-data evidence because it fixes the IMS withheld-novel roller-fault case that chi-square-only matching fails.
 
 The smoke Objective 5 run currently reports:
 

@@ -32,6 +32,8 @@ class ObjectiveFiveTests(unittest.TestCase):
 
             evaluation = evaluate_pipeline(model_dir, dictionary_dir, dataset_dir, reports_dir)
             self.assertEqual(evaluation["window_count"], 60)
+            self.assertEqual(evaluation["metric_warmup_windows"], 10)
+            self.assertGreater(evaluation["metric_excluded_window_count"], 0)
             self.assertTrue((reports_dir / "poc_detection_metrics.csv").exists())
             self.assertTrue((reports_dir / "poc_isolation_metrics.csv").exists())
             self.assertTrue((reports_dir / "poc_event_metrics.csv").exists())
@@ -44,6 +46,7 @@ class ObjectiveFiveTests(unittest.TestCase):
             detection = pd.read_csv(reports_dir / "poc_detection_metrics.csv")
             isolation = pd.read_csv(reports_dir / "poc_isolation_metrics.csv")
             event_metrics = pd.read_csv(reports_dir / "poc_event_metrics.csv")
+            window_decisions = pd.read_csv(reports_dir / "poc_window_decisions.csv")
             event_decisions = pd.read_csv(reports_dir / "poc_event_decisions.csv")
             cross_domain = pd.read_csv(reports_dir / "poc_cross_domain_metrics.csv")
             performance = pd.read_csv(reports_dir / "poc_performance_metrics.csv")
@@ -54,8 +57,31 @@ class ObjectiveFiveTests(unittest.TestCase):
             self.assertIn("event_true_fault_isolation_rate", event_metrics.columns)
             self.assertIn("event_false_positive_rate", event_metrics.columns)
             self.assertIn("event_fault_detection_rate", event_metrics.columns)
+            self.assertIn("metric_excluded", window_decisions.columns)
+            self.assertIn("state_window_index", window_decisions.columns)
             self.assertIn("event_decision", event_decisions.columns)
             self.assertIn("event_anomaly_fraction", event_decisions.columns)
+            self.assertIn("metric_excluded", event_decisions.columns)
+            metric_excluded = window_decisions["metric_excluded"].astype(str).str.lower().eq("true")
+            self.assertEqual(evaluation["metric_excluded_window_count"], int(metric_excluded.sum()))
+            self.assertLess(
+                int(
+                    detection.loc[
+                        detection["scope"].eq("overall"),
+                        "window_count",
+                    ].iloc[0]
+                ),
+                evaluation["window_count"],
+            )
+            self.assertEqual(
+                int(
+                    detection.loc[
+                        detection["scope"].eq("overall"),
+                        "window_count",
+                    ].iloc[0]
+                ),
+                evaluation["metric_window_count"],
+            )
             self.assertEqual(set(cross_domain["baseline_id"]), {1, 2, 3, 4})
             performance_metrics = set(performance["metric"])
             self.assertIn("estimated_forward_linear_flops_per_window", performance_metrics)

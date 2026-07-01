@@ -61,6 +61,7 @@ def build_fault_dictionary(model_dir: Path, dataset_dir: Path, config_path: Path
         latent_columns=extraction.latent_columns,
         cluster_result=cluster_result,
         threshold=threshold,
+        config=config,
         source_model_id=source_model_id,
         source_dataset_id=source_dataset_id,
     )
@@ -177,32 +178,40 @@ def decide_latent_cluster(latents: np.ndarray, dictionary: Dict[str, object]) ->
     cluster_config = dictionary.get("clustering", {}).get("config", {}) or {}
     required_fraction = float(cluster_config.get("cluster_match_min_member_fraction", 0.50))
     centroid = values.mean(axis=0)
-    scored: List[Tuple[float, float, float, Dict[str, object]]] = []
+    scored: List[Tuple[float, float, float, float, Dict[str, object]]] = []
     for entry in entries:
         entry_centroid = np.asarray(entry["centroid"], dtype=np.float64)
         entry_precision = np.asarray(entry["precision"], dtype=np.float64)
         centroid_distance = squared_mahalanobis(centroid, entry_centroid, entry_precision)
-        threshold = float(entry["mahalanobis_threshold"])
+        threshold = _effective_entry_threshold(entry)
+        chi_square_threshold_value = _chi_square_entry_threshold(entry)
         member_distances = np.asarray(
             [squared_mahalanobis(row, entry_centroid, entry_precision) for row in values],
             dtype=np.float64,
         )
         inlier_fraction = float(np.mean(member_distances <= threshold))
-        scored.append((centroid_distance, inlier_fraction, threshold, entry))
+        scored.append((centroid_distance, inlier_fraction, threshold, chi_square_threshold_value, entry))
 
     matching = [
         item for item in scored if item[0] <= item[2] and item[1] >= required_fraction
     ]
-    distance, inlier_fraction, threshold, entry = min(matching or scored, key=lambda item: item[0])
+    distance, inlier_fraction, threshold, chi_square_threshold_value, entry = min(
+        matching or scored,
+        key=lambda item: item[0],
+    )
     is_known = bool(matching)
+    decision = "known" if is_known else "novel"
+    if not is_known and distance <= chi_square_threshold_value:
+        decision = "novel_empirical_threshold"
     return {
-        "decision": "known" if is_known else "novel",
+        "decision": decision,
         "decision_basis": "rolling_cluster_to_dictionary",
         "fault_id": entry["fault_id"],
         "label": entry["label"],
         "cluster_label": entry.get("cluster_label"),
         "distance": float(distance),
         "threshold": threshold,
+        "chi_square_threshold": chi_square_threshold_value,
         "cluster_support_count": int(values.shape[0]),
         "cluster_member_inlier_fraction": inlier_fraction,
         "cluster_match_min_member_fraction": required_fraction,
@@ -231,6 +240,7 @@ def _dictionary_entries(
     latent_columns: List[str],
     cluster_result: ClusterResult,
     threshold: Dict[str, float],
+    config: Dict[str, object],
     source_model_id: str,
     source_dataset_id: str,
 ) -> Tuple[List[Dict[str, object]], List[Dict[str, object]]]:
@@ -269,6 +279,13 @@ def _dictionary_entries(
         values = cluster_frame[latent_columns].to_numpy(dtype=np.float64)
         covariance = covariance_with_ledoit_wolf(values)
         centroid = values.mean(axis=0)
+        empirical_threshold = _empirical_mahalanobis_threshold(
+            values,
+            centroid,
+            covariance.precision,
+            threshold,
+            config,
+        )
         entries.append(
             {
                 "fault_id": f"fault_{len(entries) + 1:03d}",
@@ -286,8 +303,25 @@ def _dictionary_entries(
                 "source_dataset_id": source_dataset_id,
                 "latent_dim": len(latent_columns),
                 "mahalanobis_confidence": threshold["confidence"],
-                "mahalanobis_threshold": threshold["threshold"],
-                "mahalanobis_threshold_method": threshold["method"],
+                "mahalanobis_threshold": empirical_threshold["effective_threshold"],
+                "mahalanobis_effective_threshold": empirical_threshold["effective_threshold"],
+                "mahalanobis_chi_square_threshold": threshold["threshold"],
+                "mahalanobis_chi_square_method": threshold["method"],
+                "mahalanobis_threshold_method": empirical_threshold["effective_method"],
+                "mahalanobis_empirical_enabled": empirical_threshold["enabled"],
+                "mahalanobis_empirical_threshold": empirical_threshold["empirical_threshold"],
+                "mahalanobis_empirical_threshold_uncapped": empirical_threshold[
+                    "empirical_threshold_uncapped"
+                ],
+                "mahalanobis_empirical_percentile": empirical_threshold["percentile"],
+                "mahalanobis_empirical_margin": empirical_threshold["margin"],
+                "mahalanobis_empirical_min_samples": empirical_threshold["min_samples"],
+                "mahalanobis_empirical_status": empirical_threshold["status"],
+                "mahalanobis_source_distance_sq_min": empirical_threshold["distance_min"],
+                "mahalanobis_source_distance_sq_median": empirical_threshold["distance_median"],
+                "mahalanobis_source_distance_sq_p95": empirical_threshold["distance_p95"],
+                "mahalanobis_source_distance_sq_p99": empirical_threshold["distance_p99"],
+                "mahalanobis_source_distance_sq_max": empirical_threshold["distance_max"],
                 "cluster_probability_mean": float(cluster_frame["cluster_probability"].mean()),
                 "cluster_persistence": cluster_persistence_for_label(cluster_result, cluster_label),
                 "cluster_fault_label_counts": fault_counts,
@@ -336,14 +370,82 @@ def _nearest_entry(latent: np.ndarray, entries: List[Dict[str, object]]) -> Dict
         )
         distances.append((distance, entry))
     distance, entry = min(distances, key=lambda item: item[0])
-    threshold = float(entry["mahalanobis_threshold"])
+    threshold = _effective_entry_threshold(entry)
+    chi_square_threshold_value = _chi_square_entry_threshold(entry)
+    decision = "known" if distance <= threshold else "novel"
+    if decision != "known" and distance <= chi_square_threshold_value:
+        decision = "novel_empirical_threshold"
     return {
-        "decision": "known" if distance <= threshold else "novel",
+        "decision": decision,
         "fault_id": entry["fault_id"],
         "label": entry["label"],
         "cluster_label": entry.get("cluster_label"),
         "distance": float(distance),
         "threshold": threshold,
+        "chi_square_threshold": chi_square_threshold_value,
+    }
+
+
+def _effective_entry_threshold(entry: Dict[str, object]) -> float:
+    return float(entry.get("mahalanobis_effective_threshold", entry.get("mahalanobis_threshold")))
+
+
+def _chi_square_entry_threshold(entry: Dict[str, object]) -> float:
+    return float(entry.get("mahalanobis_chi_square_threshold", entry.get("mahalanobis_threshold")))
+
+
+def _empirical_mahalanobis_threshold(
+    values: np.ndarray,
+    centroid: np.ndarray,
+    precision: np.ndarray,
+    chi_square: Dict[str, float],
+    config: Dict[str, object],
+) -> Dict[str, object]:
+    distances = np.asarray(
+        [squared_mahalanobis(row, centroid, precision) for row in values],
+        dtype=np.float64,
+    )
+    if distances.size == 0:
+        raise ValueError("cannot calibrate an empirical threshold without cluster members")
+
+    enabled = bool(config.get("mahalanobis_empirical_enabled", True))
+    percentile = float(config.get("mahalanobis_empirical_percentile", 0.95))
+    margin = float(config.get("mahalanobis_empirical_margin", 1.0))
+    min_samples = int(config.get("mahalanobis_empirical_min_samples", 5))
+    if not 0.0 < percentile <= 1.0:
+        raise ValueError("mahalanobis_empirical_percentile must be in (0, 1]")
+    if margin <= 0.0:
+        raise ValueError("mahalanobis_empirical_margin must be positive")
+    if min_samples <= 0:
+        raise ValueError("mahalanobis_empirical_min_samples must be positive")
+
+    chi_threshold = float(chi_square["threshold"])
+    quantile_distance = float(np.quantile(distances, percentile))
+    empirical_uncapped = float(quantile_distance * margin)
+    empirical_capped = float(min(chi_threshold, empirical_uncapped))
+    use_empirical = enabled and int(distances.size) >= min_samples and empirical_uncapped > 0.0
+    effective_threshold = empirical_capped if use_empirical else chi_threshold
+    status = "used" if use_empirical else ("disabled" if not enabled else "not_enough_samples")
+
+    return {
+        "enabled": enabled,
+        "status": status,
+        "percentile": percentile,
+        "margin": margin,
+        "min_samples": min_samples,
+        "empirical_threshold": empirical_capped if use_empirical else None,
+        "empirical_threshold_uncapped": empirical_uncapped if use_empirical else None,
+        "effective_threshold": float(effective_threshold),
+        "effective_method": (
+            "source_cluster_mahalanobis_percentile_margin_capped_by_chi_square"
+            if use_empirical
+            else chi_square["method"]
+        ),
+        "distance_min": float(np.min(distances)),
+        "distance_median": float(np.median(distances)),
+        "distance_p95": float(np.quantile(distances, 0.95)),
+        "distance_p99": float(np.quantile(distances, 0.99)),
+        "distance_max": float(np.max(distances)),
     }
 
 
@@ -364,12 +466,18 @@ def _decision_summary(decisions: pd.DataFrame, config: Dict[str, object]) -> Dic
     return {
         "anomaly_decision_count": int(len(decisions)),
         "known_decision_rate": float(decisions["dictionary_decision"].eq("known").mean()),
-        "novel_decision_rate": float(decisions["dictionary_decision"].eq("novel").mean()),
+        "novel_decision_rate": float(_novel_dictionary_mask(decisions["dictionary_decision"]).mean()),
         "known_fault_match_rate": float(known_correct[known_faults].mean()) if known_faults.any() else None,
-        "withheld_novel_rate": float(decisions.loc[withheld_faults, "dictionary_decision"].eq("novel").mean())
+        "withheld_novel_rate": float(
+            _novel_dictionary_mask(decisions.loc[withheld_faults, "dictionary_decision"]).mean()
+        )
         if withheld_faults.any()
         else None,
     }
+
+
+def _novel_dictionary_mask(values: pd.Series) -> pd.Series:
+    return values.astype(str).str.startswith("novel")
 
 
 def _withheld_anomaly_count(frame: pd.DataFrame, config: Dict[str, object]) -> int:
@@ -388,6 +496,18 @@ def _clustering_details(config: Dict[str, object], cluster_result: ClusterResult
     )
     details["cluster_match_min_member_fraction"] = float(
         config.get("cluster_match_min_member_fraction", 0.50)
+    )
+    details["mahalanobis_empirical_enabled"] = bool(
+        config.get("mahalanobis_empirical_enabled", True)
+    )
+    details["mahalanobis_empirical_percentile"] = float(
+        config.get("mahalanobis_empirical_percentile", 0.95)
+    )
+    details["mahalanobis_empirical_margin"] = float(
+        config.get("mahalanobis_empirical_margin", 1.0)
+    )
+    details["mahalanobis_empirical_min_samples"] = int(
+        config.get("mahalanobis_empirical_min_samples", 5)
     )
     details["event_window_size"] = int(config.get("event_window_size", details["rolling_window_size"]))
     details["event_min_anomaly_votes"] = int(config.get("event_min_anomaly_votes", 3))
